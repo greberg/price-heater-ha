@@ -1,0 +1,92 @@
+// Smoke tests of the card elements with a minimal DOM shim: each card
+// renders from a fake hass without throwing and shows its main figures.
+import test from "node:test";
+import assert from "node:assert/strict";
+import { makeHass } from "./fixtures.mjs";
+
+class FakeElement {
+  constructor() {
+    this.children = [];
+    this.events = [];
+  }
+  attachShadow() {
+    this.shadowRoot = { innerHTML: "", addEventListener() {} };
+    return this.shadowRoot;
+  }
+  dispatchEvent(ev) {
+    this.events.push(ev);
+    return true;
+  }
+  appendChild(el) {
+    this.children.push(el);
+  }
+  addEventListener() {}
+}
+const registry = new Map();
+globalThis.HTMLElement = FakeElement;
+globalThis.customElements = { get: (n) => registry.get(n), define: (n, c) => registry.set(n, c) };
+globalThis.window = globalThis;
+globalThis.document = {
+  createElement(tag) {
+    const C = registry.get(tag);
+    return C ? new C() : { tag, addEventListener() {} };
+  },
+};
+const realInfo = console.info;
+console.info = () => {};
+await import("../../custom_components/price_heater/frontend/price-heater-cards.js?v=test");
+console.info = realInfo;
+
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+test("both cards are registered for the card picker", () => {
+  assert.ok(registry.get("price-heater-card"));
+  assert.ok(registry.get("price-heater-chart-card"));
+  assert.deepEqual(window.customCards.map((c) => c.type), ["price-heater-card", "price-heater-chart-card"]);
+});
+
+test("status card shows temperature, reason and toggles automation", () => {
+  const card = document.createElement("price-heater-card");
+  card.setConfig({});
+  const { hass, calls } = makeHass({ now: Date.now() });
+  card.hass = hass;
+  const html = card.shadowRoot.innerHTML;
+  assert.match(html, /20\.4/);
+  assert.match(html, /Cheap electricity – heating/);
+  assert.match(html, /Living room/);
+  assert.match(html, /data-toggle="automation"/);
+  const target = { dataset: { toggle: "automation" } };
+  card._onClick({ composedPath: () => [target] });
+  assert.deepEqual(calls[0], { domain: "switch", service: "turn_off", data: { entity_id: "switch.price_heater_automation" } });
+});
+
+test("status card in Swedish with automation off", () => {
+  const card = document.createElement("price-heater-card");
+  card.setConfig({ title: "Vardagsrum" });
+  card.hass = makeHass({ lang: "sv", enabled: false, reason: "expensive_price", heater: "off" }).hass;
+  const html = card.shadowRoot.innerHTML;
+  assert.match(html, /Dyrt – väntar/);
+  assert.match(html, /20,4/);
+  assert.match(html, /Automatiken är av/);
+  assert.match(html, /Vardagsrum/);
+});
+
+test("chart card draws bars and loads history", async () => {
+  const card = document.createElement("price-heater-chart-card");
+  card.setConfig({});
+  card.hass = makeHass().hass;
+  await tick();
+  await tick();
+  const html = card.shadowRoot.innerHTML;
+  assert.equal((html.match(/class="bar /g) || []).length, 24);
+  assert.match(html, /class="strip-on"/);
+  assert.match(html, /class="temp"/);
+});
+
+test("problems are shown instead of the card", () => {
+  const card = document.createElement("price-heater-card");
+  card.setConfig({});
+  card.hass = { states: {}, entities: {}, language: "en" };
+  assert.match(card.shadowRoot.innerHTML, /No Price Heater found/);
+  assert.throws(() => card.setConfig({ entity: "switch.x" }));
+});

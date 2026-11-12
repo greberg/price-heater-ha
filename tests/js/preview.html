@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Price Heater cards preview</title>
+<!-- Dev preview: serve the repo root (python3 -m http.server) and open /tests/js/preview.html -->
+<style>
+  :root { --primary-color:#03a9f4; --primary-text-color:#212121; --secondary-text-color:#727272; --divider-color:#e0e0e0;
+    --card-background-color:#fff; --success-color:#43a047; --warning-color:#ffa600; --error-color:#db4437; --info-color:#039be5;
+    --state-icon-color:#44739e; --text-primary-color:#fff; --disabled-text-color:#bdbdbd; }
+  body.dark { --primary-text-color:#e1e1e1; --secondary-text-color:#9b9b9b; --divider-color:#3a3a3a; --card-background-color:#1c1c1c; background:#111; }
+  body { font-family: Roboto, system-ui, sans-serif; background:#f5f5f5; margin:0; padding:16px; }
+  .wrap { display:grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap:16px; max-width:1100px; }
+  ha-card { display:block; background:var(--card-background-color); border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,.15); }
+  ha-icon { display:inline-block; width:var(--mdc-icon-size,24px); height:var(--mdc-icon-size,24px); border-radius:50%; background:currentColor; opacity:.8; }
+</style>
+</head>
+<body>
+<p><label><input type="checkbox" id="dark"> dark</label> <label><input type="checkbox" id="sv"> svenska</label></p>
+<div class="wrap" id="wrap"></div>
+<script type="module">
+  customElements.define("ha-card", class extends HTMLElement {});
+  customElements.define("ha-icon", class extends HTMLElement {});
+  const { makeHass } = await import("./fixtures.mjs");
+  await import("../../custom_components/price_heater/frontend/price-heater-cards.js?v=preview");
+  const wrap = document.getElementById("wrap");
+  function draw() {
+    wrap.innerHTML = "";
+    const lang = document.getElementById("sv").checked ? "sv" : "en";
+    const configs = [
+      ["price-heater-card", {}, {}],
+      ["price-heater-chart-card", {}, {}],
+      ["price-heater-card", {}, { enabled: false, reason: "expensive_price", heater: "off", temp: "19.4" }],
+      ["price-heater-card", {}, { reason: "below_min", temp: "18.2" }],
+    ];
+    for (const [type, config, opts] of configs) {
+      const card = document.createElement(type);
+      card.setConfig(config);
+      card.hass = makeHass({ lang, ...opts }).hass;
+      wrap.appendChild(card);
+    }
+  }
+  document.getElementById("dark").onchange = (e) => { document.body.classList.toggle("dark", e.target.checked); };
+  document.getElementById("sv").onchange = draw;
+  draw();
+</script>
+</body>
+</html>

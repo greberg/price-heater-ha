@@ -1,0 +1,82 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Price Heater",
+        "description": "Slå på eller av ett element baserat på rumstemperatur och elpris. Under minimitemperaturen är elementet alltid på; vid maxtemperaturen alltid av; däremellan värmer det bara när elen är billig.",
+        "data": {
+          "name": "Namn",
+          "heater_entity": "Element (switch, input_boolean eller climate)",
+          "temperature_sensor": "Temperaturgivare",
+          "price_sensor": "Elprissensor",
+          "min_temp": "Minimitemperatur",
+          "max_temp": "Maxtemperatur",
+          "hysteresis": "Hysteres",
+          "cheap_hours": "Antal billigaste timmar per dygn att värma",
+          "price_threshold": "Alltid billigt vid eller under detta pris (valfritt)",
+          "min_cycle_minutes": "Minsta tid mellan omslag"
+        },
+        "data_description": {
+          "price_sensor": "Tillståndet ska vara aktuellt pris. För 'billigaste timmar' behövs även dagens prislista som attribut (raw_today, today eller prices_today), som Nordpool (HACS), Energi Data Service och ENTSO-e har.",
+          "min_temp": "Under denna temperatur är elementet alltid på, oavsett pris.",
+          "max_temp": "Vid eller över denna temperatur är elementet alltid av.",
+          "hysteresis": "Marginal som hindrar elementet från att slå av och på hela tiden runt gränserna.",
+          "cheap_hours": "Värm under så många av dygnets billigaste timmar (0 stänger av).",
+          "min_cycle_minutes": "Skyddar reläer och kompressorer. Min/max-gränserna ignorerar detta."
+        }
+      }
+    },
+    "error": {
+      "min_not_below_max": "Minimitemperaturen måste vara lägre än maxtemperaturen.",
+      "hysteresis_too_large": "Hysteresen måste vara mindre än halva avståndet mellan min- och maxtemperatur."
+    },
+    "abort": {
+      "already_configured": "Detta element styrs redan av Price Heater."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Inställningar för Price Heater",
+        "data": {
+          "heater_entity": "Element (switch, input_boolean eller climate)",
+          "temperature_sensor": "Temperaturgivare",
+          "price_sensor": "Elprissensor",
+          "min_temp": "Minimitemperatur",
+          "max_temp": "Maxtemperatur",
+          "hysteresis": "Hysteres",
+          "cheap_hours": "Antal billigaste timmar per dygn att värma",
+          "price_threshold": "Alltid billigt vid eller under detta pris (valfritt)",
+          "min_cycle_minutes": "Minsta tid mellan omslag"
+        }
+      }
+    },
+    "error": {
+      "min_not_below_max": "Minimitemperaturen måste vara lägre än maxtemperaturen.",
+      "hysteresis_too_large": "Hysteresen måste vara mindre än halva avståndet mellan min- och maxtemperatur."
+    }
+  },
+  "entity": {
+    "switch": {
+      "automation": { "name": "Automatik" }
+    },
+    "binary_sensor": {
+      "heating_demand": { "name": "Värmebehov" },
+      "cheap_price": { "name": "Billigt elpris" }
+    },
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "temperature_unavailable": "Temperatur saknas",
+          "below_min": "Under minimum - värmer",
+          "above_max": "Över max - av",
+          "cheap_price": "Billigt - värmer",
+          "near_max": "Billigt, men nära max",
+          "expensive_price": "Dyrt - väntar",
+          "price_unavailable": "Pris saknas"
+        }
+      }
+    }
+  }
+}

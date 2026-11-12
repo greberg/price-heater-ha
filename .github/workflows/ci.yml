@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 4 * * 1"
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    # Official Python images: logic.py stays 3.9-compatible so it can be
+    # tested anywhere; Home Assistant itself runs on the newest.
+    container: python:${{ matrix.python }}-slim
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile
+        run: python -m compileall -q custom_components tests
+      - name: Unit tests
+        run: pip install -q pytest && python -m pytest -q tests
+
+  cards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Syntax
+        run: for f in custom_components/price_heater/frontend/*.js; do node --check "$f"; done
+      - name: Unit tests
+        run: node --test tests/js/*.test.mjs
+
+  hassfest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hacs/action@main
+        with:
+          category: integration
+          ignore: brands

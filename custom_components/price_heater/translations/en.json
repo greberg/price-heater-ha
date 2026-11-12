@@ -1,0 +1,82 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Price Heater",
+        "description": "Turn a heater on or off based on room temperature and electricity price. Below the minimum temperature the heater always runs; at the maximum it always stops; in between it only heats while electricity is cheap.",
+        "data": {
+          "name": "Name",
+          "heater_entity": "Heater (switch, input_boolean or climate)",
+          "temperature_sensor": "Temperature sensor",
+          "price_sensor": "Electricity price sensor",
+          "min_temp": "Minimum temperature",
+          "max_temp": "Maximum temperature",
+          "hysteresis": "Hysteresis",
+          "cheap_hours": "Cheapest hours per day to heat",
+          "price_threshold": "Always cheap at or below this price (optional)",
+          "min_cycle_minutes": "Minimum time between switches"
+        },
+        "data_description": {
+          "price_sensor": "Its state should be the current price. To use 'cheapest hours' it also needs today's price list as an attribute (raw_today, today or prices_today), as Nordpool (HACS), Energi Data Service and ENTSO-e provide.",
+          "min_temp": "The heater is always on below this temperature, whatever the price.",
+          "max_temp": "The heater is always off at or above this temperature.",
+          "hysteresis": "Margin that stops the heater from flapping on and off around the limits.",
+          "cheap_hours": "Heat during this many of today's cheapest hours (0 disables).",
+          "min_cycle_minutes": "Protects relays and compressors. Minimum/maximum temperature limits ignore this."
+        }
+      }
+    },
+    "error": {
+      "min_not_below_max": "Minimum temperature must be lower than maximum temperature.",
+      "hysteresis_too_large": "Hysteresis must be less than half the gap between minimum and maximum temperature."
+    },
+    "abort": {
+      "already_configured": "This heater is already controlled by Price Heater."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Price Heater settings",
+        "data": {
+          "heater_entity": "Heater (switch, input_boolean or climate)",
+          "temperature_sensor": "Temperature sensor",
+          "price_sensor": "Electricity price sensor",
+          "min_temp": "Minimum temperature",
+          "max_temp": "Maximum temperature",
+          "hysteresis": "Hysteresis",
+          "cheap_hours": "Cheapest hours per day to heat",
+          "price_threshold": "Always cheap at or below this price (optional)",
+          "min_cycle_minutes": "Minimum time between switches"
+        }
+      }
+    },
+    "error": {
+      "min_not_below_max": "Minimum temperature must be lower than maximum temperature.",
+      "hysteresis_too_large": "Hysteresis must be less than half the gap between minimum and maximum temperature."
+    }
+  },
+  "entity": {
+    "switch": {
+      "automation": { "name": "Automation" }
+    },
+    "binary_sensor": {
+      "heating_demand": { "name": "Heating demand" },
+      "cheap_price": { "name": "Cheap price" }
+    },
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "temperature_unavailable": "Temperature unavailable",
+          "below_min": "Below minimum - heating",
+          "above_max": "Above maximum - off",
+          "cheap_price": "Cheap price - heating",
+          "near_max": "Cheap, but near maximum",
+          "expensive_price": "Expensive - waiting",
+          "price_unavailable": "Price unavailable"
+        }
+      }
+    }
+  }
+}
