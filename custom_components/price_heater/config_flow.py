@@ -37,6 +37,7 @@ from .const import (
     DOMAIN,
     HEATER_DOMAINS,
 )
+from .logic import range_error
 
 
 def _temp_selector(minimum: float, maximum: float, step: float) -> selector.NumberSelector:
@@ -94,14 +95,10 @@ def _schema() -> dict:
 
 
 def _validate(user_input: dict[str, Any]) -> dict[str, str]:
-    errors: dict[str, str] = {}
-    if user_input[CONF_MIN_TEMP] >= user_input[CONF_MAX_TEMP]:
-        errors["base"] = "min_not_below_max"
-    elif user_input[CONF_HYSTERESIS] * 2 >= (
-        user_input[CONF_MAX_TEMP] - user_input[CONF_MIN_TEMP]
-    ):
-        errors["base"] = "hysteresis_too_large"
-    return errors
+    error = range_error(
+        user_input[CONF_MIN_TEMP], user_input[CONF_MAX_TEMP], user_input[CONF_HYSTERESIS]
+    )
+    return {"base": error} if error else {}
 
 
 class PriceHeaterConfigFlow(ConfigFlow, domain=DOMAIN):

@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from .controller import PriceHeaterController
 from .frontend_cards import async_register_cards
 
-PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.SWITCH]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.CLIMATE, Platform.SENSOR, Platform.SWITCH]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -31,5 +31,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload when options change."""
+    """Reload when options change (not for a min/max set from the thermostat)."""
+    if {**entry.data, **entry.options} == entry.runtime_data.config:
+        return
     await hass.config_entries.async_reload(entry.entry_id)

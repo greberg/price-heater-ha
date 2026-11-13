@@ -192,3 +192,13 @@ def test_energy_meter_restore_only_same_day():
     meter.update(at(12), 1000.0, 1.0)
     meter.update(at(12, 6), 1000.0, 1.0)
     assert abs(meter.energy_kwh - 3.6) < 1e-9
+
+
+# --- min/max range ----------------------------------------------------------
+
+def test_range_error():
+    assert logic.range_error(19, 22, 0.5) is None
+    assert logic.range_error(22, 22, 0.5) == "min_not_below_max"
+    assert logic.range_error(23, 22, 0.5) == "min_not_below_max"
+    assert logic.range_error(21, 22, 0.5) == "hysteresis_too_large"
+    assert logic.range_error(20.5, 22, 0.5) is None

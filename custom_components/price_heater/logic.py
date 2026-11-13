@@ -224,6 +224,15 @@ def analyze_prices(
     return info
 
 
+def range_error(min_temp: float, max_temp: float, hysteresis: float) -> Optional[str]:
+    """Why a min/max/hysteresis combination is invalid, or None if it is fine."""
+    if min_temp >= max_temp:
+        return "min_not_below_max"
+    if hysteresis * 2 >= max_temp - min_temp:
+        return "hysteresis_too_large"
+    return None
+
+
 def decide(
     temperature: Optional[float],
     is_cheap: Optional[bool],

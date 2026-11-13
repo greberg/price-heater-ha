@@ -52,6 +52,7 @@ Then go to **Settings → Devices & services → Add integration → Price Heate
 
 | Entity | Purpose |
 |---|---|
+| `climate.<name>` | The Price Heater as a thermostat, for the standard thermostat card, voice assistants and apps. **Heat** runs the automation; **Off** pauses it and turns the heater off. The target *range* is the min/max band: dragging it changes **Minimum/Maximum temperature** (saved as settings). It shows heating or idle from the real heater. |
 | `switch.<name>_automation` | Turn the automatic control on or off. When off, the integration only reports and never touches the heater. Use it for manual override. |
 | `sensor.<name>_status` | Why the heater is on or off. Attributes show temperature, price, price rank today, the cheap-price limit and more. |
 | `binary_sensor.<name>_heating_demand` | What the rules want right now. |
@@ -62,7 +63,7 @@ Then go to **Settings → Devices & services → Add integration → Price Heate
 
 Energy and cost are counted by the integration every minute and on every change, at the price of the moment, and survive a restart. Time while Home Assistant was down is not counted.
 
-If you switch the heater by hand while automation is on, it will be switched back at the next check (after the minimum cycle time). Turn the automation switch off first.
+If you switch the heater by hand while automation is on, it will be switched back at the next check (after the minimum cycle time). Turn the automation switch off first (it pauses without touching the heater; the thermostat's **Off** also turns the heater off).
 
 ## Cards
 
@@ -98,6 +99,12 @@ python3 -m pytest tests
 
 ```bash
 node --test tests/js/*.test.mjs
+```
+
+The entities are tested in a real Home Assistant core (Python 3.13, `pip install pytest-homeassistant-custom-component`):
+
+```bash
+python -m pytest -c tests_ha/pytest.ini --rootdir . tests_ha
 ```
 
 To look at the cards without Home Assistant, serve the repository root (`python3 -m http.server`) and open `/tests/js/preview.html`.

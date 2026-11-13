@@ -67,6 +67,11 @@
     }
   },
   "entity": {
+    "climate": {
+      "thermostat": {
+        "name": "Thermostat"
+      }
+    },
     "switch": {
       "automation": {
         "name": "Automation"
@@ -102,6 +107,14 @@
       "cost_today": {
         "name": "Cost today"
       }
+    }
+  },
+  "exceptions": {
+    "min_not_below_max": {
+      "message": "Minimum temperature must be lower than maximum temperature."
+    },
+    "hysteresis_too_large": {
+      "message": "The gap between minimum and maximum must be more than twice the hysteresis ({hysteresis} °C)."
     }
   }
 }

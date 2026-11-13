@@ -23,6 +23,17 @@ jobs:
       - name: Unit tests
         run: pip install -q pytest && python -m pytest -q tests
 
+  homeassistant:
+    # The entities running in a real Home Assistant core.
+    runs-on: ubuntu-latest
+    container: python:3.13-slim
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Home Assistant test harness
+        run: pip install -q pytest-homeassistant-custom-component
+      - name: Integration tests
+        run: python -m pytest -q -c tests_ha/pytest.ini --rootdir . tests_ha
+
   cards:
     runs-on: ubuntu-latest
     steps:

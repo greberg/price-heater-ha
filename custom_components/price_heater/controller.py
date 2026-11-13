@@ -16,7 +16,7 @@ from homeassistant.const import (
     STATE_UNKNOWN,
 )
 from homeassistant.core import Event, HomeAssistant, State, callback
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import (
@@ -51,6 +51,7 @@ from .logic import (
     EnergyMeter,
     PriceInfo,
     analyze_prices,
+    range_error,
     currency_of,
     decide,
     heater_power,
@@ -72,6 +73,9 @@ class PriceHeaterController:
         self.hass = hass
         self.entry = entry
         config = {**entry.data, **entry.options}
+        # What this controller was built from; the update listener compares
+        # against it so changes made by the thermostat don't force a reload.
+        self.config = config
 
         self.heater_entity: str = config[CONF_HEATER]
         self.temp_sensor: str = config[CONF_TEMP_SENSOR]
@@ -157,6 +161,34 @@ class PriceHeaterController:
     async def async_set_enabled(self, enabled: bool) -> None:
         """Turn the automation on/off (from the switch entity)."""
         self.enabled = enabled
+        await self.async_evaluate()
+
+    async def async_set_heating(self, heating: bool) -> None:
+        """Thermostat mode: heat runs the automation, off pauses it and stops the heater."""
+        self.enabled = heating
+        if not heating and self.heater_on:
+            await self._async_set_heater(False)
+            self.last_action = dt_util.now()
+        await self.async_evaluate()
+
+    async def async_set_range(self, min_temp: float, max_temp: float) -> None:
+        """Change min/max (from the thermostat) and save them as options."""
+        error = range_error(min_temp, max_temp, self.hysteresis)
+        if error:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key=error,
+                translation_placeholders={"hysteresis": str(self.hysteresis)},
+            )
+        self.min_temp = min_temp
+        self.max_temp = max_temp
+        # Keep every other setting: once options exist they replace the
+        # optional fields from setup.
+        options = dict(self.entry.options or self.entry.data)
+        options[CONF_MIN_TEMP] = min_temp
+        options[CONF_MAX_TEMP] = max_temp
+        self.config = {**self.entry.data, **options}
+        self.hass.config_entries.async_update_entry(self.entry, options=options)
         await self.async_evaluate()
 
     # ------------------------------------------------------------------ logic
@@ -319,6 +351,7 @@ class PriceHeaterController:
             result["power_meter"] = self.power_sensor
         for platform, key in (
             ("sensor", "status"),
+            ("climate", "thermostat"),
             ("switch", "automation"),
             ("binary_sensor", "heating_demand"),
             ("binary_sensor", "cheap_price"),

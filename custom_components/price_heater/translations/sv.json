@@ -67,6 +67,11 @@
     }
   },
   "entity": {
+    "climate": {
+      "thermostat": {
+        "name": "Termostat"
+      }
+    },
     "switch": {
       "automation": {
         "name": "Automatik"
@@ -102,6 +107,14 @@
       "cost_today": {
         "name": "Kostnad idag"
       }
+    }
+  },
+  "exceptions": {
+    "min_not_below_max": {
+      "message": "Lägsta temperatur måste vara lägre än högsta temperatur."
+    },
+    "hysteresis_too_large": {
+      "message": "Skillnaden mellan lägsta och högsta temperatur måste vara mer än dubbla hysteresen ({hysteresis} °C)."
     }
   }
 }
