@@ -14,7 +14,9 @@
           "hysteresis": "Hysteres",
           "cheap_hours": "Antal billigaste timmar per dygn att värma",
           "price_threshold": "Alltid billigt vid eller under detta pris (valfritt)",
-          "min_cycle_minutes": "Minsta tid mellan omslag"
+          "min_cycle_minutes": "Minsta tid mellan omslag",
+          "power_sensor": "Effektsensor (valfri)",
+          "heater_power": "Elementets effekt (valfri)"
         },
         "data_description": {
           "price_sensor": "Tillståndet ska vara aktuellt pris. För 'billigaste timmar' behövs även dagens prislista som attribut (raw_today, today eller prices_today), som Nordpool (HACS), Energi Data Service och ENTSO-e har.",
@@ -22,7 +24,9 @@
           "max_temp": "Vid eller över denna temperatur är elementet alltid av.",
           "hysteresis": "Marginal som hindrar elementet från att slå av och på hela tiden runt gränserna.",
           "cheap_hours": "Värm under så många av dygnets billigaste timmar (0 stänger av).",
-          "min_cycle_minutes": "Skyddar reläer och kompressorer. Min/max-gränserna ignorerar detta."
+          "min_cycle_minutes": "Skyddar reläer och kompressorer. Min/max-gränserna ignorerar detta.",
+          "power_sensor": "En mätare på elementet, t.ex. en smart plugg. Ger exakt effekt, energi och kostnad.",
+          "heater_power": "Utan mätare: elementets märkeffekt, räknas medan det är på."
         }
       }
     },
@@ -47,7 +51,13 @@
           "hysteresis": "Hysteres",
           "cheap_hours": "Antal billigaste timmar per dygn att värma",
           "price_threshold": "Alltid billigt vid eller under detta pris (valfritt)",
-          "min_cycle_minutes": "Minsta tid mellan omslag"
+          "min_cycle_minutes": "Minsta tid mellan omslag",
+          "power_sensor": "Effektsensor (valfri)",
+          "heater_power": "Elementets effekt (valfri)"
+        },
+        "data_description": {
+          "power_sensor": "En mätare på elementet, t.ex. en smart plugg. Ger exakt effekt, energi och kostnad.",
+          "heater_power": "Utan mätare: elementets märkeffekt, räknas medan det är på."
         }
       }
     },
@@ -58,11 +68,17 @@
   },
   "entity": {
     "switch": {
-      "automation": { "name": "Automatik" }
+      "automation": {
+        "name": "Automatik"
+      }
     },
     "binary_sensor": {
-      "heating_demand": { "name": "Värmebehov" },
-      "cheap_price": { "name": "Billigt elpris" }
+      "heating_demand": {
+        "name": "Värmebehov"
+      },
+      "cheap_price": {
+        "name": "Billigt elpris"
+      }
     },
     "sensor": {
       "status": {
@@ -76,6 +92,15 @@
           "expensive_price": "Dyrt - väntar",
           "price_unavailable": "Pris saknas"
         }
+      },
+      "power": {
+        "name": "Effekt"
+      },
+      "energy_today": {
+        "name": "Energi idag"
+      },
+      "cost_today": {
+        "name": "Kostnad idag"
       }
     }
   }

@@ -10,6 +10,7 @@ const core = await import(moduleUrl("price-heater-core.js"));
 const {
   formatClock,
   formatNumber,
+  formatPower,
   isMissing,
   langOf,
   localeOf,
@@ -79,6 +80,11 @@ const STYLES = `
   .alert.warning ha-icon { color: var(--warning-color, #ffa600); }
   .alert.info { background: color-mix(in srgb, var(--info-color, #039be5) 12%, transparent); }
   .alert.info ha-icon { color: var(--info-color, #039be5); }
+  .sub { color: var(--secondary-text-color); font-size: 11px; }
+  .divider { height: 1px; background: var(--divider-color); }
+  .power { fill: color-mix(in srgb, var(--state-climate-heat-color, #ff8100) 45%, transparent);
+    stroke: var(--state-climate-heat-color, #ff8100); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .total { font-size: 12px; color: var(--primary-text-color); }
   .empty { color: var(--secondary-text-color); font-size: 14px; padding: 8px 0; }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--secondary-text-color); }
   .legend i { display: inline-block; width: 12px; height: 8px; margin-right: 4px; vertical-align: middle; border-radius: 2px; }
@@ -267,6 +273,21 @@ class PriceHeaterCard extends PriceHeaterBaseCard {
     return super.renderHeader(model, chip);
   }
 
+  renderConsumption(m) {
+    if (!m.hasPower) return "";
+    const rated = m.powerSource === "rated";
+    const power = `${esc(formatPower(m.power, this.loc))}${rated ? ` <span class="sub">≈</span>` : ""}`;
+    const energy = m.energy === null ? "–" : `${this.n(m.energy, 2)} <span class="unit">kWh</span>`;
+    const cost = m.cost === null ? "–" : `${this.n(m.cost, 2)}${m.currency ? ` <span class="unit">${esc(m.currency)}</span>` : ""}`;
+    return `<div class="divider"></div>
+      <div class="grid">
+        ${this.stat("power", this.t("label.power"), power)}
+        ${this.stat("energy_today", this.t("label.energy_today"), energy)}
+        ${this.stat("cost_today", this.t("label.cost_today"), cost)}
+      </div>
+      ${rated ? `<span class="sub">≈ ${esc(this.t("label.rated"))}</span>` : ""}`;
+  }
+
   renderBody(m) {
     const temp = m.temperature === null ? "–" : `${this.n(m.temperature, 1)}<span class="unit">${esc(m.tempUnit)}</span>`;
     const reasonCls = m.heating ? "heating" : m.problem ? "problem" : "";
@@ -300,6 +321,7 @@ class PriceHeaterCard extends PriceHeaterBaseCard {
       </div>
       ${gaugeHtml}
       <div class="grid">${stats}</div>
+      ${this.renderConsumption(m)}
       ${m.alerts.length ? `<div class="alerts">${this.alertList(m.alerts)}</div>` : ""}
     </div>`;
   }
@@ -317,6 +339,7 @@ class PriceHeaterChartCard extends PriceHeaterBaseCard {
     return [
       { name: "show_history", selector: { boolean: {} } },
       { name: "show_temperature", selector: { boolean: {} } },
+      { name: "show_power", selector: { boolean: {} } },
     ];
   }
 
@@ -347,7 +370,7 @@ class PriceHeaterChartCard extends PriceHeaterBaseCard {
 
   async _loadHistory(start) {
     if (this._loading || !this._hass?.callWS) return;
-    const ids = [this._ids.heater, this._ids.temperature].filter(Boolean);
+    const ids = [this._ids.heater, this._ids.temperature, this._ids.power].filter(Boolean);
     if (!ids.length) return;
     this._loading = true;
     try {
@@ -377,10 +400,12 @@ class PriceHeaterChartCard extends PriceHeaterBaseCard {
     const dayStart = schedule.length ? Date.parse(schedule[0].start) : null;
     const showHistory = this._config.show_history !== false;
     const showTemp = this._config.show_temperature !== false;
+    const showPower = this._config.show_power !== false && m.hasPower && !!this._ids.power;
 
     let spans = [];
     let temps = [];
-    if (dayStart !== null && (showHistory || showTemp)) {
+    let power = [];
+    if (dayStart !== null && (showHistory || showTemp || showPower)) {
       if (!this._history || this._history.start !== dayStart || this._historyStale) {
         queueMicrotask(() => this._loadHistory(dayStart));
       }
@@ -389,6 +414,10 @@ class PriceHeaterChartCard extends PriceHeaterBaseCard {
       if (showTemp) temps = numberPoints(data[this._ids.temperature]);
       // The live state extends the history to now.
       if (showTemp && m.temperature !== null) temps.push({ t: now, v: m.temperature });
+      if (showPower) {
+        power = numberPoints(data[this._ids.power]);
+        if (m.power !== null) power.push({ t: now, v: m.power });
+      }
     }
 
     const chart = priceChart({
@@ -398,6 +427,7 @@ class PriceHeaterChartCard extends PriceHeaterBaseCard {
       threshold: m.threshold,
       spans,
       temps,
+      power,
       min: m.min,
       max: m.max,
     });
@@ -428,6 +458,10 @@ class PriceHeaterChartCard extends PriceHeaterBaseCard {
       parts.push(`<path class="temp" d="${chart.tempPath}"/>`);
       for (const tick of chart.tempTicks) parts.push(`<text x="${p.x1 + 4}" y="${tick.y + 3}">${esc(this.n(tick.value, 1))}°</text>`);
     }
+    if (chart.powerPath) {
+      parts.push(`<path class="power" d="${chart.powerPath}"><title>${esc(this.t("label.power_used"))}</title></path>`);
+      parts.push(`<text x="${p.x1 + 4}" y="${chart.powerTop + 7}">${esc(formatPower(chart.powerMax, this.loc))}</text>`);
+    }
     if (showHistory) {
       parts.push(`<rect class="strip-bg" x="${p.x0}" y="${chart.stripY}" width="${p.x1 - p.x0}" height="6" rx="2"/>`);
       for (const s of chart.spans) parts.push(`<rect class="strip-on" x="${s.x}" y="${chart.stripY}" width="${s.w}" height="6" rx="2"/>`);
@@ -444,12 +478,19 @@ class PriceHeaterChartCard extends PriceHeaterBaseCard {
       `<span><i style="background:var(--warning-color,#ffa600);opacity:.6"></i>${esc(this.t("label.expensive"))}</span>`,
       showHistory ? `<span><i style="background:var(--state-climate-heat-color,#ff8100)"></i>${esc(this.t("label.heater_ran"))}</span>` : "",
       chart.tempPath ? `<span><i class="line" style="background:var(--info-color,#039be5)"></i>${esc(this.t("label.temperature"))}</span>` : "",
+      chart.powerPath ? `<span><i style="background:var(--state-climate-heat-color,#ff8100);opacity:.5"></i>${esc(this.t("label.power_used"))}</span>` : "",
       unit ? `<span>${esc(unit.trim())}</span>` : "",
     ].join("");
 
     return `<div class="content">
       <svg viewBox="0 0 ${chart.width} ${chart.height}" role="img" aria-label="${esc(this.t("chart.aria"))}">${parts.join("")}</svg>
       <div class="legend">${legend}</div>
+      ${m.hasPower && m.energy !== null ? `<div class="total">${esc(
+        this.t("label.today_total", {
+          energy: `${this.n(m.energy, 2)} kWh`,
+          cost: m.cost === null ? "–" : `${this.n(m.cost, 2)} ${m.currency}`.trim(),
+        }),
+      )}</div>` : ""}
     </div>`;
   }
 }
@@ -512,7 +553,7 @@ class PriceHeaterCardEditor extends HTMLElement {
     }
     this._form.hass = this._hass;
     this._form.schema = this.schema || [];
-    this._form.data = { show_history: true, show_temperature: true, ...this._config };
+    this._form.data = { show_history: true, show_temperature: true, show_power: true, ...this._config };
   }
 }
 

@@ -14,7 +14,9 @@
           "hysteresis": "Hysteresis",
           "cheap_hours": "Cheapest hours per day to heat",
           "price_threshold": "Always cheap at or below this price (optional)",
-          "min_cycle_minutes": "Minimum time between switches"
+          "min_cycle_minutes": "Minimum time between switches",
+          "power_sensor": "Power sensor (optional)",
+          "heater_power": "Heater power (optional)"
         },
         "data_description": {
           "price_sensor": "Its state should be the current price. To use 'cheapest hours' it also needs today's price list as an attribute (raw_today, today or prices_today), as Nordpool (HACS), Energi Data Service and ENTSO-e provide.",
@@ -22,7 +24,9 @@
           "max_temp": "The heater is always off at or above this temperature.",
           "hysteresis": "Margin that stops the heater from flapping on and off around the limits.",
           "cheap_hours": "Heat during this many of today's cheapest hours (0 disables).",
-          "min_cycle_minutes": "Protects relays and compressors. Minimum/maximum temperature limits ignore this."
+          "min_cycle_minutes": "Protects relays and compressors. Minimum/maximum temperature limits ignore this.",
+          "power_sensor": "A meter measuring the heater, e.g. a smart plug. Gives exact power, energy and cost.",
+          "heater_power": "Without a meter: the heater's rated power, counted while it is on."
         }
       }
     },
@@ -47,7 +51,13 @@
           "hysteresis": "Hysteresis",
           "cheap_hours": "Cheapest hours per day to heat",
           "price_threshold": "Always cheap at or below this price (optional)",
-          "min_cycle_minutes": "Minimum time between switches"
+          "min_cycle_minutes": "Minimum time between switches",
+          "power_sensor": "Power sensor (optional)",
+          "heater_power": "Heater power (optional)"
+        },
+        "data_description": {
+          "power_sensor": "A meter measuring the heater, e.g. a smart plug. Gives exact power, energy and cost.",
+          "heater_power": "Without a meter: the heater's rated power, counted while it is on."
         }
       }
     },
@@ -58,11 +68,17 @@
   },
   "entity": {
     "switch": {
-      "automation": { "name": "Automation" }
+      "automation": {
+        "name": "Automation"
+      }
     },
     "binary_sensor": {
-      "heating_demand": { "name": "Heating demand" },
-      "cheap_price": { "name": "Cheap price" }
+      "heating_demand": {
+        "name": "Heating demand"
+      },
+      "cheap_price": {
+        "name": "Cheap price"
+      }
     },
     "sensor": {
       "status": {
@@ -76,6 +92,15 @@
           "expensive_price": "Expensive - waiting",
           "price_unavailable": "Price unavailable"
         }
+      },
+      "power": {
+        "name": "Power"
+      },
+      "energy_today": {
+        "name": "Energy today"
+      },
+      "cost_today": {
+        "name": "Cost today"
       }
     }
   }

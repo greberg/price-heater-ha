@@ -19,10 +19,12 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_CHEAP_HOURS,
     CONF_HEATER,
+    CONF_HEATER_POWER,
     CONF_HYSTERESIS,
     CONF_MAX_TEMP,
     CONF_MIN_CYCLE,
     CONF_MIN_TEMP,
+    CONF_POWER_SENSOR,
     CONF_PRICE_SENSOR,
     CONF_PRICE_THRESHOLD,
     CONF_TEMP_SENSOR,
@@ -76,6 +78,15 @@ def _schema() -> dict:
         vol.Required(CONF_MIN_CYCLE, default=DEFAULT_MIN_CYCLE): selector.NumberSelector(
             selector.NumberSelectorConfig(
                 min=0, max=120, step=1, unit_of_measurement="min",
+                mode=selector.NumberSelectorMode.BOX,
+            )
+        ),
+        vol.Optional(CONF_POWER_SENSOR): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="sensor", device_class="power")
+        ),
+        vol.Optional(CONF_HEATER_POWER): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=0, max=20000, step=10, unit_of_measurement="W",
                 mode=selector.NumberSelectorMode.BOX,
             )
         ),

@@ -31,8 +31,8 @@
     const configs = [
       ["price-heater-card", {}, {}],
       ["price-heater-chart-card", {}, {}],
-      ["price-heater-card", {}, { enabled: false, reason: "expensive_price", heater: "off", temp: "19.4" }],
-      ["price-heater-card", {}, { reason: "below_min", temp: "18.2" }],
+      ["price-heater-card", {}, { enabled: false, reason: "expensive_price", heater: "off", temp: "19.4", power: "rated" }],
+      ["price-heater-card", {}, { reason: "below_min", temp: "18.2", power: null }],
     ];
     for (const [type, config, opts] of configs) {
       const card = document.createElement(type);

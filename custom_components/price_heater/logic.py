@@ -252,3 +252,93 @@ def decide(
     if heater_on or temperature < max_temp - hysteresis:
         return Decision(True, REASON_CHEAP)
     return Decision(False, REASON_NEAR_MAX)
+
+
+# --------------------------------------------------------------------------
+# Power, energy and cost
+# --------------------------------------------------------------------------
+
+POWER_FACTORS = {"w": 1.0, "kw": 1000.0, "mw": 1_000_000.0}
+
+# Longer gaps between updates (Home Assistant was down) are not counted:
+# nobody knows what the heater drew meanwhile.
+MAX_GAP = timedelta(minutes=10)
+
+
+def power_watts(value: Any, unit: Optional[str]) -> Optional[float]:
+    """A power reading in watts (W, kW or MW; no unit counts as W)."""
+    number = to_float(value)
+    if number is None:
+        return None
+    factor = POWER_FACTORS.get(str(unit or "W").strip().lower())
+    return None if factor is None else number * factor
+
+
+def heater_power(
+    sensor_watts: Optional[float],
+    rated_watts: Optional[float],
+    heater_on: Optional[bool],
+) -> Optional[float]:
+    """Power now: the meter if there is one, else the rated power while on."""
+    if sensor_watts is not None:
+        return max(0.0, sensor_watts)
+    if rated_watts is None or heater_on is None:
+        return None
+    return rated_watts if heater_on else 0.0
+
+
+def currency_of(price_unit: Optional[str]) -> Optional[str]:
+    """'SEK/kWh' -> 'SEK', 'öre/kWh' -> 'öre'."""
+    if not price_unit:
+        return None
+    head = str(price_unit).split("/", 1)[0].strip()
+    return head or None
+
+
+@dataclass
+class EnergyMeter:
+    """Energy (kWh) and cost used today, integrated from power samples.
+
+    Each sample's power and price hold until the next sample (the
+    controller samples at least every minute and on every change).
+    """
+
+    day: Optional[str] = None
+    energy_kwh: float = 0.0
+    cost: float = 0.0
+    last_time: Optional[datetime] = None
+    last_watts: Optional[float] = None
+    last_price: Optional[float] = None
+
+    def update(
+        self, now: datetime, watts: Optional[float], price: Optional[float]
+    ) -> None:
+        today = now.date().isoformat()
+        start = self.last_time
+        if self.day != today:
+            # A new day starts from zero; count only the part after midnight.
+            midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            if start is not None and start < midnight:
+                start = midnight
+            self.day, self.energy_kwh, self.cost = today, 0.0, 0.0
+        if start is not None and self.last_watts is not None:
+            gap = now - start
+            if timedelta(0) < gap <= MAX_GAP:
+                kwh = self.last_watts * gap.total_seconds() / 3_600_000
+                self.energy_kwh += kwh
+                if self.last_price is not None:
+                    self.cost += kwh * self.last_price
+        self.last_time = now
+        self.last_watts = watts
+        self.last_price = price
+
+    def restore(
+        self, now: datetime, day: Optional[str], energy_kwh: Any, cost: Any
+    ) -> None:
+        """Continue today's totals after a restart (ignored on a new day)."""
+        energy = to_float(energy_kwh)
+        if day != now.date().isoformat() or energy is None:
+            return
+        self.day = day
+        self.energy_kwh = energy
+        self.cost = to_float(cost) or 0.0

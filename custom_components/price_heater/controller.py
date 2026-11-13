@@ -34,6 +34,8 @@ from .const import (
     CONF_MIN_CYCLE,
     CONF_MIN_TEMP,
     CONF_PRICE_SENSOR,
+    CONF_HEATER_POWER,
+    CONF_POWER_SENSOR,
     CONF_PRICE_THRESHOLD,
     CONF_TEMP_SENSOR,
     DEFAULT_CHEAP_HOURS,
@@ -46,9 +48,13 @@ from .const import (
 from .logic import (
     OVERRIDE_REASONS,
     Decision,
+    EnergyMeter,
     PriceInfo,
     analyze_prices,
+    currency_of,
     decide,
+    heater_power,
+    power_watts,
     price_schedule,
     to_float,
 )
@@ -78,6 +84,11 @@ class PriceHeaterController:
         # over the value from the initial setup.
         threshold_source = entry.options if entry.options else entry.data
         self.price_threshold = to_float(threshold_source.get(CONF_PRICE_THRESHOLD))
+        # Optional: a power meter on the heater, else its rated power.
+        source = entry.options if entry.options else entry.data
+        self.power_sensor: str | None = source.get(CONF_POWER_SENSOR) or None
+        rated = to_float(source.get(CONF_HEATER_POWER))
+        self.rated_power = rated if rated and rated > 0 else None
         self.min_cycle = timedelta(
             minutes=float(config.get(CONF_MIN_CYCLE, DEFAULT_MIN_CYCLE))
         )
@@ -87,6 +98,8 @@ class PriceHeaterController:
         self.price_info = PriceInfo()
         self.schedule: list[dict] = []
         self.price_unit: str | None = None
+        self.power: float | None = None
+        self.meter = EnergyMeter()
         self.heater_on: bool | None = None
         self.decision: Decision | None = None
         self.waiting_for_cycle = False
@@ -106,7 +119,16 @@ class PriceHeaterController:
         self._unsubs.append(
             async_track_state_change_event(
                 self.hass,
-                [self.heater_entity, self.temp_sensor, self.price_sensor],
+                [
+                    entity
+                    for entity in (
+                        self.heater_entity,
+                        self.temp_sensor,
+                        self.price_sensor,
+                        self.power_sensor,
+                    )
+                    if entity
+                ],
                 self._handle_state_change,
             )
         )
@@ -172,6 +194,9 @@ class PriceHeaterController:
             )
             self.waiting_for_cycle = False
 
+            self.power = heater_power(self._sensor_watts(), self.rated_power, self.heater_on)
+            self.meter.update(now, self.power, self.price_info.current_price)
+
             if (
                 self.enabled
                 and self.decision.turn_on is not None
@@ -193,6 +218,23 @@ class PriceHeaterController:
                     self.last_action = now
 
         async_dispatcher_send(self.hass, self.signal)
+
+    @property
+    def has_power(self) -> bool:
+        """Whether power, energy and cost can be shown."""
+        return bool(self.power_sensor or self.rated_power)
+
+    @property
+    def currency(self) -> str | None:
+        return currency_of(self.price_unit)
+
+    def _sensor_watts(self) -> float | None:
+        if not self.power_sensor:
+            return None
+        state = self.hass.states.get(self.power_sensor)
+        if state is None or state.state in UNUSABLE_STATES:
+            return None
+        return power_watts(state.state, state.attributes.get("unit_of_measurement"))
 
     def _cycle_blocked(self, heater_state: State | None, now: datetime) -> bool:
         if heater_state is None or self.min_cycle <= timedelta(0):
@@ -253,6 +295,11 @@ class PriceHeaterController:
             "heater_on": self.heater_on,
             "waiting_for_min_cycle": self.waiting_for_cycle,
             "last_action": self.last_action.isoformat() if self.last_action else None,
+            "power": self.power,
+            "power_source": "sensor" if self.power_sensor else "rated" if self.rated_power else None,
+            "energy_today": round(self.meter.energy_kwh, 3) if self.has_power else None,
+            "cost_today": round(self.meter.cost, 2) if self.has_power else None,
+            "currency": self.currency,
             "hysteresis": self.hysteresis,
             "cheap_hours": self.cheap_hours,
             "price_unit": self.price_unit,
@@ -268,11 +315,16 @@ class PriceHeaterController:
             "temperature": self.temp_sensor,
             "price": self.price_sensor,
         }
+        if self.power_sensor:
+            result["power_meter"] = self.power_sensor
         for platform, key in (
             ("sensor", "status"),
             ("switch", "automation"),
             ("binary_sensor", "heating_demand"),
             ("binary_sensor", "cheap_price"),
+            ("sensor", "power"),
+            ("sensor", "energy_today"),
+            ("sensor", "cost_today"),
         ):
             entity_id = registry.async_get_entity_id(
                 platform, DOMAIN, f"{self.entry.entry_id}_{key}"

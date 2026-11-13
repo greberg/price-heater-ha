@@ -60,6 +60,25 @@ test("status card shows temperature, reason and toggles automation", () => {
   assert.deepEqual(calls[0], { domain: "switch", service: "turn_off", data: { entity_id: "switch.price_heater_automation" } });
 });
 
+test("status card shows power, energy and cost", () => {
+  const card = document.createElement("price-heater-card");
+  card.setConfig({});
+  card.hass = makeHass({ lang: "sv" }).hass;
+  const html = card.shadowRoot.innerHTML;
+  assert.match(html, /1,18 kW/);
+  assert.match(html, /4,37/);
+  assert.match(html, /3,91/);
+  assert.match(html, /Kostnad idag/);
+  const rated = document.createElement("price-heater-card");
+  rated.setConfig({});
+  rated.hass = makeHass({ power: "rated" }).hass;
+  assert.match(rated.shadowRoot.innerHTML, /estimated from rated power/);
+  const none = document.createElement("price-heater-card");
+  none.setConfig({});
+  none.hass = makeHass({ power: null }).hass;
+  assert.doesNotMatch(none.shadowRoot.innerHTML, /Power now/);
+});
+
 test("status card in Swedish with automation off", () => {
   const card = document.createElement("price-heater-card");
   card.setConfig({ title: "Vardagsrum" });
@@ -81,6 +100,8 @@ test("chart card draws bars and loads history", async () => {
   assert.equal((html.match(/class="bar /g) || []).length, 24);
   assert.match(html, /class="strip-on"/);
   assert.match(html, /class="temp"/);
+  assert.match(html, /class="power"/);
+  assert.match(html, /Today 4\.37 kWh · 3\.91 SEK/);
 });
 
 test("problems are shown instead of the card", () => {

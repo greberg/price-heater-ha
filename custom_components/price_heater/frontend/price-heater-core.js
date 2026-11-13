@@ -39,11 +39,18 @@ const en = {
   "label.expensive": "Expensive",
   "label.heater_ran": "Heater on",
   "label.now": "Now",
+  "label.power": "Power now",
+  "label.energy_today": "Used today",
+  "label.cost_today": "Cost today",
+  "label.rated": "estimated from rated power",
+  "label.power_used": "Power",
+  "label.today_total": "Today {energy} · {cost}",
   "alert.disabled": "Automation is off – the heater is not being controlled.",
   "alert.waiting": "Waiting for the minimum time between switches.",
   "alert.temperature": "The temperature sensor is unavailable.",
   "alert.price": "The price sensor is unavailable.",
   "alert.heater": "The heater is unavailable.",
+  "alert.power": "The power sensor is unavailable.",
   "chart.empty": "The price sensor has no price list for today. Cheapest hours need Nordpool (HACS), Energi Data Service or ENTSO-e.",
   "chart.aria": "Today's electricity prices",
   "problem.no_entity": "No Price Heater found. Add the integration first.",
@@ -55,6 +62,7 @@ const en = {
   "editor.title_help": "Leave empty for the integration's name.",
   "editor.show_temperature": "Show temperature line",
   "editor.show_history": "Show when the heater ran",
+  "editor.show_power": "Show power",
 };
 
 const sv = {
@@ -86,11 +94,18 @@ const sv = {
   "label.expensive": "Dyrt",
   "label.heater_ran": "Element på",
   "label.now": "Nu",
+  "label.power": "Effekt nu",
+  "label.energy_today": "Förbrukat idag",
+  "label.cost_today": "Kostnad idag",
+  "label.rated": "uppskattat från märkeffekt",
+  "label.power_used": "Effekt",
+  "label.today_total": "Idag {energy} · {cost}",
   "alert.disabled": "Automatiken är av – elementet styrs inte.",
   "alert.waiting": "Väntar på minsta tid mellan omslag.",
   "alert.temperature": "Temperaturgivaren är inte tillgänglig.",
   "alert.price": "Elprissensorn är inte tillgänglig.",
   "alert.heater": "Elementet är inte tillgängligt.",
+  "alert.power": "Effektsensorn är inte tillgänglig.",
   "chart.empty": "Elprissensorn har ingen prislista för idag. Billigaste timmar kräver Nordpool (HACS), Energi Data Service eller ENTSO-e.",
   "chart.aria": "Dagens elpriser",
   "problem.no_entity": "Ingen Price Heater hittades. Lägg till integrationen först.",
@@ -102,6 +117,7 @@ const sv = {
   "editor.title_help": "Lämna tomt för integrationens namn.",
   "editor.show_temperature": "Visa temperaturlinje",
   "editor.show_history": "Visa när elementet var på",
+  "editor.show_power": "Visa effekt",
 };
 
 export const STRINGS = { en, sv };
@@ -184,6 +200,14 @@ export function formatClock(time, loc = {}) {
   }
 }
 
+/** "850 W", "1.2 kW" (kW from 1000 W). */
+export function formatPower(watts, loc = {}) {
+  const n = toNumber(watts);
+  if (n === null) return "–";
+  if (Math.abs(n) >= 1000) return `${formatNumber(n / 1000, 2, loc)} kW`;
+  return `${formatNumber(n, 0, loc)} W`;
+}
+
 /** Sensible digits for a price: öre-level for kr/€ prices, fewer for big numbers. */
 export function priceDigits(values) {
   const max = Math.max(0, ...values.map((v) => Math.abs(toNumber(v) ?? 0)));
@@ -258,6 +282,7 @@ export function statusModel(hass, ids) {
   if (isMissing(tempState)) alerts.push({ level: "error", key: "temperature", text: "alert.temperature" });
   if (isMissing(st("price"))) alerts.push({ level: "error", key: "price", text: "alert.price" });
   if (isMissing(heater)) alerts.push({ level: "error", key: "heater", text: "alert.heater" });
+  if (ids.power_meter && isMissing(st("power_meter"))) alerts.push({ level: "error", key: "power_meter", text: "alert.power" });
 
   return {
     title: status?.attributes?.friendly_name?.replace(/\s*Status$/i, "") || "Price Heater",
@@ -279,6 +304,12 @@ export function statusModel(hass, ids) {
     count: toNumber(a.price_slots_today),
     cheapLimit: toNumber(a.cheap_price_limit),
     threshold: toNumber(a.price_threshold),
+    hasPower: a.power_source === "sensor" || a.power_source === "rated",
+    powerSource: a.power_source || null,
+    power: toNumber(a.power),
+    energy: toNumber(a.energy_today),
+    cost: toNumber(a.cost_today),
+    currency: a.currency || "",
     alerts,
   };
 }
@@ -358,7 +389,7 @@ function niceStep(range, target) {
  * schedule: [{start, price, cheap}] (from the status sensor)
  * spans: heater-on spans in ms; temps: [{t, v}] room temperature points
  */
-export function priceChart({ schedule, now, cheapLimit = null, threshold = null, spans = [], temps = [], min = null, max = null, width = 600, height = 220 }) {
+export function priceChart({ schedule, now, cheapLimit = null, threshold = null, spans = [], temps = [], power = [], min = null, max = null, width = 600, height = 220 }) {
   const slots = (schedule || [])
     .map((s) => ({ start: Date.parse(s.start), price: toNumber(s.price), cheap: s.cheap }))
     .filter((s) => Number.isFinite(s.start));
@@ -368,7 +399,10 @@ export function priceChart({ schedule, now, cheapLimit = null, threshold = null,
   const start = slots[0].start;
   const end = slots[slots.length - 1].start + duration;
   const showTemp = temps.length > 0 && min !== null && max !== null;
-  const plot = { x0: 36, x1: width - (showTemp ? 32 : 8), y0: 8, y1: height - 34 };
+  const showPower = power.length > 0;
+  // Bottom band: the heater-on strip, or the power curve (taller) with a meter.
+  const band = showPower ? 30 : 0;
+  const plot = { x0: 36, x1: width - (showTemp || showPower ? 32 : 8), y0: 8, y1: height - 34 - band };
   const x = (time) => r1(plot.x0 + ((time - start) / (end - start)) * (plot.x1 - plot.x0));
 
   const prices = slots.map((s) => s.price).filter((v) => v !== null);
@@ -424,11 +458,40 @@ export function priceChart({ schedule, now, cheapLimit = null, threshold = null,
       .filter((s) => s.x2 > s.x)
       .map((s) => ({ x: s.x, w: r1(s.x2 - s.x) })),
     stripY: height - 18,
+    powerPath: "",
+    powerMax: null,
+    powerTop: null,
     tempPath: "",
     tempTicks: [],
     minY: null,
     maxY: null,
   };
+
+  if (showPower) {
+    // A step area from the strip's bottom up to the band's top.
+    const bottom = height - 12;
+    const top = plot.y1 + 8;
+    const inDay = power.filter((p) => p.t <= now).sort((a, b) => a.t - b.t);
+    const peak = Math.max(0, ...inDay.map((p) => p.v));
+    if (peak > 0) {
+      const yP = (v) => r1(bottom - (Math.max(0, v) / peak) * (bottom - top));
+      const stopAt = Math.min(end, now);
+      let d = "";
+      inDay.forEach((p, i) => {
+        const from = Math.max(start, p.t);
+        const to = Math.min(stopAt, i + 1 < inDay.length ? inDay[i + 1].t : stopAt);
+        if (to <= from) return;
+        d += `${d ? " L" : `M${x(from)} ${bottom} L`}${x(from)} ${yP(p.v)} L${x(to)} ${yP(p.v)}`;
+      });
+      if (d) {
+        const lastX = d.match(/L([\d.]+) [\d.]+$/)[1];
+        result.powerPath = `${d} L${lastX} ${bottom} Z`;
+      }
+      result.powerMax = peak;
+      result.powerTop = top;
+      result.stripY = bottom;
+    }
+  }
 
   if (showTemp) {
     const inDay = temps.filter((p) => p.t >= start && p.t <= Math.min(end, now));

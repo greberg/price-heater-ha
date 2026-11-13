@@ -132,3 +132,63 @@ def test_price_schedule_marks_cheap_slots():
     assert schedule[12]["cheap"] is True  # under threshold 0.75
     assert schedule[18]["cheap"] is False
     assert logic.price_schedule({}, at(10), 4, None) == []
+
+
+# --- power, energy and cost -------------------------------------------------
+
+def test_power_units():
+    assert logic.power_watts("1.5", "kW") == 1500
+    assert logic.power_watts("800", "W") == 800
+    assert logic.power_watts("800", None) == 800
+    assert logic.power_watts("x", "W") is None
+    assert logic.power_watts("1", "kWh") is None
+
+
+def test_heater_power_prefers_meter_then_rated():
+    assert logic.heater_power(950.0, 1000.0, True) == 950.0
+    assert logic.heater_power(None, 1000.0, True) == 1000.0
+    assert logic.heater_power(None, 1000.0, False) == 0.0
+    assert logic.heater_power(None, None, True) is None
+    assert logic.heater_power(-3.0, None, True) == 0.0
+
+
+def test_currency_from_price_unit():
+    assert logic.currency_of("SEK/kWh") == "SEK"
+    assert logic.currency_of("öre/kWh") == "öre"
+    assert logic.currency_of(None) is None
+
+
+def test_energy_meter_integrates_power_and_cost():
+    meter = logic.EnergyMeter()
+    meter.update(at(10), 2000.0, 1.5)
+    for minute in range(1, 61):  # one hour at 2 kW and 1.5/kWh
+        meter.update(at(10, 0) + timedelta(minutes=minute), 2000.0, 1.5)
+    assert abs(meter.energy_kwh - 2.0) < 1e-9
+    assert abs(meter.cost - 3.0) < 1e-9
+
+
+def test_energy_meter_skips_gaps_and_resets_at_midnight():
+    meter = logic.EnergyMeter()
+    meter.update(at(10), 1000.0, 1.0)
+    meter.update(at(11), 1000.0, 1.0)  # an hour gap: Home Assistant was down
+    assert meter.energy_kwh == 0.0
+    meter.update(at(23, 58), 1200.0, 2.0)
+    meter.update(at(23, 59), 1200.0, 2.0)
+    assert meter.energy_kwh > 0
+    next_day = at(23, 59) + timedelta(minutes=3)  # 00:02
+    meter.update(next_day, 1200.0, 2.0)
+    assert meter.day == next_day.date().isoformat()
+    # only the two minutes after midnight count for the new day
+    assert abs(meter.energy_kwh - 1200 * 120 / 3_600_000) < 1e-9
+
+
+def test_energy_meter_restore_only_same_day():
+    meter = logic.EnergyMeter()
+    meter.restore(at(12), at(0).date().isoformat(), "3.5", "4.2")
+    assert meter.energy_kwh == 3.5 and meter.cost == 4.2
+    other = logic.EnergyMeter()
+    other.restore(at(12), "2020-01-01", "3.5", "4.2")
+    assert other.energy_kwh == 0.0
+    meter.update(at(12), 1000.0, 1.0)
+    meter.update(at(12, 6), 1000.0, 1.0)
+    assert abs(meter.energy_kwh - 3.6) < 1e-9

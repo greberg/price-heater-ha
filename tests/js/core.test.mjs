@@ -110,3 +110,35 @@ test("number formats follow the profile", () => {
   assert.equal(core.formatNumber(1.5, 2, core.localeOf({ locale: { language: "sv", number_format: "comma_decimal" } })), "1.50");
   assert.equal(core.formatNumber(null), "–");
 });
+
+test("power, energy and cost in the model", () => {
+  const { hass } = makeHass({ now: NOON });
+  const m = core.statusModel(hass, core.resolveEntities(hass).ids);
+  assert.equal(m.hasPower, true);
+  assert.equal(m.power, 1180);
+  assert.equal(m.energy, 4.37);
+  assert.equal(m.currency, "SEK");
+  const none = makeHass({ now: NOON, power: null }).hass;
+  assert.equal(core.statusModel(none, core.resolveEntities(none).ids).hasPower, false);
+});
+
+test("power formatting", () => {
+  const loc = core.localeOf({ locale: { language: "sv", number_format: "language" } });
+  assert.equal(core.formatPower(850, loc), "850 W");
+  assert.equal(core.formatPower(1250, loc), "1,25 kW");
+  assert.equal(core.formatPower(null), "–");
+});
+
+test("power area in the chart", () => {
+  const { hass } = makeHass({ now: NOON });
+  const schedule = hass.states["sensor.price_heater_status"].attributes.prices_today;
+  const start = Date.parse(schedule[0].start);
+  const power = [{ t: start, v: 0 }, { t: start + 7200000, v: 1200 }, { t: start + 18000000, v: 0 }];
+  const chart = core.priceChart({ schedule, now: NOON, power });
+  assert.match(chart.powerPath, /^M.* Z$/);
+  assert.equal(chart.powerMax, 1200);
+  assert.ok(chart.powerTop > chart.plot.y1);
+  const without = core.priceChart({ schedule, now: NOON });
+  assert.equal(without.powerPath, "");
+  assert.ok(without.plot.y1 > chart.plot.y1);
+});
