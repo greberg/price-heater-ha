@@ -46,6 +46,9 @@ const STYLES = `
     background: color-mix(in srgb, var(--disabled-text-color, #9e9e9e) 16%, transparent); color: var(--disabled-text-color, #9e9e9e); flex: none; }
   button.link.heater.on { background: color-mix(in srgb, var(--state-climate-heat-color, #ff8100) 18%, transparent); color: var(--state-climate-heat-color, #ff8100); }
   button.link.heater ha-icon { --mdc-icon-size: 30px; }
+  button.link.power-now { margin-left: auto; align-items: flex-end; text-align: right; }
+  .power-now .value { font-size: 22px; line-height: 28px; white-space: nowrap; color: var(--primary-text-color); }
+  .power-now.on .value { color: var(--state-climate-heat-color, #ff8100); }
   .reason { font-size: 14px; color: var(--primary-text-color); }
   .reason.heating { color: var(--state-climate-heat-color, #ff8100); }
   .reason.problem { color: var(--error-color, #db4437); }
@@ -273,19 +276,25 @@ class PriceHeaterCard extends PriceHeaterBaseCard {
     return super.renderHeader(model, chip);
   }
 
-  renderConsumption(m) {
+  renderPower(m) {
     if (!m.hasPower) return "";
     const rated = m.powerSource === "rated";
-    const power = `${esc(formatPower(m.power, this.loc))}${rated ? ` <span class="sub">≈</span>` : ""}`;
+    return `<button class="link stat power-now ${m.power > 0 ? "on" : ""}" data-more="power">
+        <span class="label">${esc(this.t("label.power"))}</span>
+        <span class="value">${esc(formatPower(m.power, this.loc))}${rated ? ` <span class="sub" title="${esc(this.t("label.rated"))}">≈</span>` : ""}</span>
+      </button>`;
+  }
+
+  renderConsumption(m) {
+    if (!m.hasPower) return `<div class="divider"></div><span class="sub">${esc(this.t("label.no_power"))}</span>`;
     const energy = m.energy === null ? "–" : `${this.n(m.energy, 2)} <span class="unit">kWh</span>`;
     const cost = m.cost === null ? "–" : `${this.n(m.cost, 2)}${m.currency ? ` <span class="unit">${esc(m.currency)}</span>` : ""}`;
     return `<div class="divider"></div>
       <div class="grid">
-        ${this.stat("power", this.t("label.power"), power)}
         ${this.stat("energy_today", this.t("label.energy_today"), energy)}
         ${this.stat("cost_today", this.t("label.cost_today"), cost)}
       </div>
-      ${rated ? `<span class="sub">≈ ${esc(this.t("label.rated"))}</span>` : ""}`;
+      ${m.powerSource === "rated" ? `<span class="sub">≈ ${esc(this.t("label.rated"))}</span>` : ""}`;
   }
 
   renderBody(m) {
@@ -318,6 +327,7 @@ class PriceHeaterCard extends PriceHeaterBaseCard {
           <button class="link" data-more="temperature"><span class="big">${temp}</span></button>
           <button class="link" data-more="status"><span class="reason ${reasonCls}">${esc(reason)}</span></button>
         </div>
+        ${this.renderPower(m)}
       </div>
       ${gaugeHtml}
       <div class="grid">${stats}</div>

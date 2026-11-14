@@ -65,7 +65,11 @@ test("status card shows power, energy and cost", () => {
   card.setConfig({});
   card.hass = makeHass({ lang: "sv" }).hass;
   const html = card.shadowRoot.innerHTML;
-  assert.match(html, /1,18 kW/);
+  // power now sits in the top row, next to the temperature
+  const hero = html.slice(html.indexOf('class="hero"'), html.indexOf('class="gauge"'));
+  assert.match(hero, /Effekt nu/);
+  assert.match(hero, /1,18 kW/);
+  assert.match(html, /Förbrukat idag/);
   assert.match(html, /4,37/);
   assert.match(html, /3,91/);
   assert.match(html, /Kostnad idag/);
@@ -77,6 +81,7 @@ test("status card shows power, energy and cost", () => {
   none.setConfig({});
   none.hass = makeHass({ power: null }).hass;
   assert.doesNotMatch(none.shadowRoot.innerHTML, /Power now/);
+  assert.match(none.shadowRoot.innerHTML, /rated power under Configure/);
 });
 
 test("status card in Swedish with automation off", () => {
