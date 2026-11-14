@@ -16,7 +16,13 @@
           "price_threshold": "Always cheap at or below this price (optional)",
           "min_cycle_minutes": "Minimum time between switches",
           "power_sensor": "Power sensor (optional)",
-          "heater_power": "Heater power (optional)"
+          "heater_power": "Heater power (optional)",
+          "strategy": "Strategy",
+          "weather_entity": "Weather forecast (smart)",
+          "outdoor_sensor": "Outdoor temperature sensor (smart)",
+          "floor_sensor": "Floor / concrete temperature sensor (smart)",
+          "solar_sensor": "Sun sensor: lux, W/m² or solar production (smart)",
+          "max_floor_temp": "Maximum floor temperature (smart)"
         },
         "data_description": {
           "price_sensor": "Its state should be the current price. To use 'cheapest hours' it also needs today's price list as an attribute (raw_today, today or prices_today), as Nordpool (HACS), Energi Data Service and ENTSO-e provide.",
@@ -26,13 +32,20 @@
           "cheap_hours": "Heat during this many of today's cheapest hours (0 disables).",
           "min_cycle_minutes": "Protects relays and compressors. Minimum/maximum temperature limits ignore this.",
           "power_sensor": "A meter measuring the heater, e.g. a smart plug. Gives exact power, energy and cost.",
-          "heater_power": "Without a meter: the heater's rated power, counted while it is on."
+          "heater_power": "Without a meter: the heater's rated power, counted while it is on.",
+          "strategy": "Simple: heat in the cheapest hours. Smart: learns how your house heats and cools from its history, and plans the cheapest heating ahead with prices, weather forecast and sun - storing heat in the concrete before expensive hours. Smart uses the simple rules until it has learned enough (about two days of history).",
+          "weather_entity": "Gives outdoor temperature and clouds ahead. Smart needs this or an outdoor sensor.",
+          "outdoor_sensor": "The temperature outside now; corrects the forecast for your spot.",
+          "floor_sensor": "With floor heating: a probe in or on the slab. Lets the smart plan store heat in the concrete.",
+          "solar_sensor": "How strong the sun is on the house. Learns how much the sun heats; without it the sun's path and the forecast clouds are used.",
+          "max_floor_temp": "The heater is never on above this floor temperature (wooden floors: about 27 °C)."
         }
       }
     },
     "error": {
       "min_not_below_max": "Minimum temperature must be lower than maximum temperature.",
-      "hysteresis_too_large": "Hysteresis must be less than half the gap between minimum and maximum temperature."
+      "hysteresis_too_large": "Hysteresis must be less than half the gap between minimum and maximum temperature.",
+      "smart_needs_outdoor": "Smart needs a weather forecast or an outdoor temperature sensor."
     },
     "abort": {
       "already_configured": "This heater is already controlled by Price Heater."
@@ -53,17 +66,30 @@
           "price_threshold": "Always cheap at or below this price (optional)",
           "min_cycle_minutes": "Minimum time between switches",
           "power_sensor": "Power sensor (optional)",
-          "heater_power": "Heater power (optional)"
+          "heater_power": "Heater power (optional)",
+          "strategy": "Strategy",
+          "weather_entity": "Weather forecast (smart)",
+          "outdoor_sensor": "Outdoor temperature sensor (smart)",
+          "floor_sensor": "Floor / concrete temperature sensor (smart)",
+          "solar_sensor": "Sun sensor: lux, W/m² or solar production (smart)",
+          "max_floor_temp": "Maximum floor temperature (smart)"
         },
         "data_description": {
           "power_sensor": "A meter measuring the heater, e.g. a smart plug. Gives exact power, energy and cost.",
-          "heater_power": "Without a meter: the heater's rated power, counted while it is on."
+          "heater_power": "Without a meter: the heater's rated power, counted while it is on.",
+          "strategy": "Simple: heat in the cheapest hours. Smart: learns how your house heats and cools from its history, and plans the cheapest heating ahead with prices, weather forecast and sun - storing heat in the concrete before expensive hours. Smart uses the simple rules until it has learned enough (about two days of history).",
+          "weather_entity": "Gives outdoor temperature and clouds ahead. Smart needs this or an outdoor sensor.",
+          "outdoor_sensor": "The temperature outside now; corrects the forecast for your spot.",
+          "floor_sensor": "With floor heating: a probe in or on the slab. Lets the smart plan store heat in the concrete.",
+          "solar_sensor": "How strong the sun is on the house. Learns how much the sun heats; without it the sun's path and the forecast clouds are used.",
+          "max_floor_temp": "The heater is never on above this floor temperature (wooden floors: about 27 °C)."
         }
       }
     },
     "error": {
       "min_not_below_max": "Minimum temperature must be lower than maximum temperature.",
-      "hysteresis_too_large": "Hysteresis must be less than half the gap between minimum and maximum temperature."
+      "hysteresis_too_large": "Hysteresis must be less than half the gap between minimum and maximum temperature.",
+      "smart_needs_outdoor": "Smart needs a weather forecast or an outdoor temperature sensor."
     }
   },
   "entity": {
@@ -95,7 +121,10 @@
           "cheap_price": "Cheap price - heating",
           "near_max": "Cheap, but near maximum",
           "expensive_price": "Expensive - waiting",
-          "price_unavailable": "Price unavailable"
+          "price_unavailable": "Price unavailable",
+          "planned_heat": "Planned heating",
+          "planned_off": "Off - planned",
+          "floor_max": "Floor at maximum - off"
         }
       },
       "power": {
@@ -115,6 +144,14 @@
     },
     "hysteresis_too_large": {
       "message": "The gap between minimum and maximum must be more than twice the hysteresis ({hysteresis} °C)."
+    }
+  },
+  "selector": {
+    "strategy": {
+      "options": {
+        "simple": "Simple - cheapest hours",
+        "smart": "Smart - plan with weather, sun and stored heat"
+      }
     }
   }
 }

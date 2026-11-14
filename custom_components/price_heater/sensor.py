@@ -45,7 +45,7 @@ class PriceHeaterStatusSensor(PriceHeaterEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = ALL_REASONS
     # The price list and entity map are for the cards; keep them out of history.
-    _unrecorded_attributes = frozenset({"prices_today", "entities"})
+    _unrecorded_attributes = frozenset({"prices_today", "entities", "plan", "smart"})
 
     @property
     def native_value(self) -> str | None:

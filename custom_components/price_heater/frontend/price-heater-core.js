@@ -23,6 +23,25 @@ const en = {
   "reason.expensive_price": "Expensive – waiting",
   "reason.price_unavailable": "Price unavailable",
   "reason.none": "Waiting for first check",
+  "reason.planned_heat": "Planned – storing heat",
+  "reason.planned_off": "Off – stored heat lasts",
+  "reason.floor_max": "Floor at maximum – off",
+  "label.floor": "Floor",
+  "label.outdoor": "Outdoor",
+  "label.plan": "Smart plan",
+  "label.heating_until": "Heating until {time}",
+  "label.next_heating": "Next heating {time}",
+  "label.no_heating": "No heating needed",
+  "label.plan_total": "Next {span} h: {hours} h heat · {cost}",
+  "label.plan_hours": "Next {span} h: {hours} h heat",
+  "label.planned": "Planned heating",
+  "label.forecast": "Forecast",
+  "smart.learning": "Smart is learning how your house heats and cools (needs about two days of history) – simple rules until then.",
+  "smart.needs_variation": "Smart needs history with the heater both on and off to learn – simple rules until then.",
+  "smart.no_fit": "Smart could not make sense of the history yet – simple rules for now. It tries again every 6 hours.",
+  "smart.no_history": "Smart needs the recorder (history) to learn – simple rules for now.",
+  "smart.no_inputs": "Smart is missing a forecast or a sensor reading – simple rules meanwhile.",
+  "alert.shortfall": "The heater can't keep the minimum from {time} with this forecast.",
   "label.temperature": "Temperature",
   "label.heater": "Heater",
   "label.price": "Price now",
@@ -79,6 +98,25 @@ const sv = {
   "reason.expensive_price": "Dyrt – väntar",
   "reason.price_unavailable": "Pris saknas",
   "reason.none": "Väntar på första kontrollen",
+  "reason.planned_heat": "Planerat – lagrar värme",
+  "reason.planned_off": "Av – lagrad värme räcker",
+  "reason.floor_max": "Golvet vid max – av",
+  "label.floor": "Golv",
+  "label.outdoor": "Ute",
+  "label.plan": "Smart plan",
+  "label.heating_until": "Värmer till {time}",
+  "label.next_heating": "Nästa värme {time}",
+  "label.no_heating": "Ingen värme behövs",
+  "label.plan_total": "Närmaste {span} h: {hours} h värme · {cost}",
+  "label.plan_hours": "Närmaste {span} h: {hours} h värme",
+  "label.planned": "Planerad värme",
+  "label.forecast": "Prognos",
+  "smart.learning": "Smart lär sig hur huset värms och kyls (behöver ungefär två dygns historik) – enkla regler tills dess.",
+  "smart.needs_variation": "Smart behöver historik där värmen både varit på och av – enkla regler tills dess.",
+  "smart.no_fit": "Smart kunde inte tolka historiken än – enkla regler så länge. Den försöker igen var 6:e timme.",
+  "smart.no_history": "Smart behöver inspelaren (historik) för att lära sig – enkla regler så länge.",
+  "smart.no_inputs": "Smart saknar prognos eller en givare – enkla regler så länge.",
+  "alert.shortfall": "Värmen klarar inte minimum från {time} med den här prognosen.",
   "label.temperature": "Temperatur",
   "label.heater": "Element",
   "label.price": "Pris nu",
@@ -255,8 +293,8 @@ export function resolveEntities(hass, config = {}) {
 // Models
 // --------------------------------------------------------------------------
 
-const HEATING_REASONS = new Set(["below_min", "cheap_price"]);
-const PROBLEM_REASONS = new Set(["temperature_unavailable", "price_unavailable"]);
+const HEATING_REASONS = new Set(["below_min", "cheap_price", "planned_heat"]);
+const PROBLEM_REASONS = new Set(["temperature_unavailable", "price_unavailable", "floor_max"]);
 
 export function heaterIsOn(stateObj) {
   if (isMissing(stateObj)) return null;
@@ -285,6 +323,11 @@ export function statusModel(hass, ids) {
   if (isMissing(st("price"))) alerts.push({ level: "error", key: "price", text: "alert.price" });
   if (isMissing(heater)) alerts.push({ level: "error", key: "heater", text: "alert.heater" });
   if (ids.power_meter && isMissing(st("power_meter"))) alerts.push({ level: "error", key: "power_meter", text: "alert.power" });
+  const smart = a.strategy === "smart" ? a.smart || {} : null;
+  const plan = smart?.plan || null;
+  if (smart && smart.status && smart.status !== "ready") alerts.push({ level: "info", key: "status", text: `smart.${smart.status}` });
+  if (plan?.shortfall) alerts.push({ level: "warning", key: "status", text: "alert.shortfall", time: Date.parse(plan.shortfall) });
+  const steps = Array.isArray(a.plan) ? a.plan : [];
 
   return {
     title: status?.attributes?.friendly_name?.replace(/\s*Status$/i, "") || "Price Heater",
@@ -312,6 +355,14 @@ export function statusModel(hass, ids) {
     energy: toNumber(a.energy_today),
     cost: toNumber(a.cost_today),
     currency: a.currency || "",
+    smart: !!smart,
+    floor: toNumber(a.floor_temperature),
+    outdoor: toNumber(a.outdoor_temperature),
+    planOn: steps.length ? steps[0].on === true : null,
+    planNext: plan?.next_change ? Date.parse(plan.next_change) : null,
+    planHours: toNumber(plan?.heat_hours),
+    planCost: toNumber(plan?.cost),
+    planUntil: plan?.until ? Date.parse(plan.until) : null,
     alerts,
   };
 }
@@ -365,6 +416,17 @@ export function onSpans(rows, entityId, start, end) {
   return spans.filter((s) => s.end > s.start);
 }
 
+/** Join touching or overlapping spans. */
+export function mergeSpans(spans) {
+  const merged = [];
+  for (const s of [...spans].sort((a, b) => a.start - b.start)) {
+    const last = merged[merged.length - 1];
+    if (last && s.start <= last.end) last.end = Math.max(last.end, s.end);
+    else merged.push({ ...s });
+  }
+  return merged.filter((s) => s.end > s.start);
+}
+
 /** Numeric points ``{t, v}`` from history rows. */
 export function numberPoints(rows) {
   return (rows || [])
@@ -391,16 +453,30 @@ function niceStep(range, target) {
  * schedule: [{start, price, cheap}] (from the status sensor)
  * spans: heater-on spans in ms; temps: [{t, v}] room temperature points
  */
-export function priceChart({ schedule, now, cheapLimit = null, threshold = null, spans = [], temps = [], power = [], min = null, max = null, width = 600, height = 220 }) {
+const PLAN_STEP_MS = 15 * 60000;
+
+export function priceChart({ schedule, now, cheapLimit = null, threshold = null, spans = [], temps = [], power = [], plan = [], floors = [], min = null, max = null, width = 600, height = 220 }) {
   const slots = (schedule || [])
     .map((s) => ({ start: Date.parse(s.start), price: toNumber(s.price), cheap: s.cheap }))
     .filter((s) => Number.isFinite(s.start));
+  const firstDuration = slots.length > 1 ? slots[1].start - slots[0].start : 3600000;
+  slots.forEach((s, i) => (s.end = i + 1 < slots.length ? slots[i + 1].start : s.start + firstDuration));
+  // The smart plan carries prices beyond today (tomorrow, once published).
+  const steps = (plan || [])
+    .map((p) => ({ start: Date.parse(p.start), price: toNumber(p.price), on: p.on === true, temp: toNumber(p.temperature), floor: toNumber(p.floor) }))
+    .filter((p) => Number.isFinite(p.start));
+  const known = slots.length ? slots[slots.length - 1].end : -Infinity;
+  for (const p of steps) {
+    if (p.start < known) continue;
+    const cheap = p.price === null ? null : (cheapLimit !== null && p.price <= cheapLimit) || (threshold !== null && p.price <= threshold);
+    slots.push({ start: p.start, end: p.start + PLAN_STEP_MS, price: p.price, cheap });
+  }
   if (!slots.some((s) => s.price !== null)) return { empty: true, width, height };
 
-  const duration = slots.length > 1 ? slots[1].start - slots[0].start : 3600000;
   const start = slots[0].start;
-  const end = slots[slots.length - 1].start + duration;
-  const showTemp = temps.length > 0 && min !== null && max !== null;
+  const end = slots[slots.length - 1].end;
+  const ahead = steps.filter((p) => p.start + PLAN_STEP_MS > now && p.start < end);
+  const showTemp = (temps.length > 0 || ahead.some((p) => p.temp !== null)) && min !== null && max !== null;
   const showPower = power.length > 0;
   // Bottom band: the heater-on strip, or the power curve (taller) with a meter.
   const band = showPower ? 30 : 0;
@@ -421,16 +497,17 @@ export function priceChart({ schedule, now, cheapLimit = null, threshold = null,
     .map((s) => {
       const top = y(Math.max(0, s.price));
       const bottom = y(Math.min(0, s.price));
+      const duration = s.end - s.start;
       return {
         x: x(s.start),
-        w: Math.max(0.5, r1(x(s.start + duration) - x(s.start) - (duration >= 3600000 ? 1.5 : 0.5))),
+        w: Math.max(0.5, r1(x(s.end) - x(s.start) - (duration >= 3600000 ? 1.5 : 0.5))),
         y: top,
         h: Math.max(0.5, r1(bottom - top)),
         cheap: s.cheap === true,
-        current: now >= s.start && now < s.start + duration,
+        current: now >= s.start && now < s.end,
         price: s.price,
         start: s.start,
-        end: s.start + duration,
+        end: s.end,
       };
     });
 
@@ -438,10 +515,8 @@ export function priceChart({ schedule, now, cheapLimit = null, threshold = null,
   for (let v = pBase; v <= pHi + step / 2; v += step) yTicks.push({ y: y(v), value: Math.round(v / step) * step });
 
   const xTicks = [];
-  for (let h = 0; h <= 24; h += 3) {
-    const time = start + h * 3600000;
-    if (time <= end) xTicks.push({ x: x(time), time });
-  }
+  const tickHours = end - start > 30 * 3600000 ? 6 : 3;
+  for (let time = start; time <= end; time += tickHours * 3600000) xTicks.push({ x: x(time), time });
 
   const result = {
     empty: false,
@@ -459,11 +534,17 @@ export function priceChart({ schedule, now, cheapLimit = null, threshold = null,
       .map((s) => ({ x: x(Math.max(start, s.start)), x2: x(Math.min(end, s.end)) }))
       .filter((s) => s.x2 > s.x)
       .map((s) => ({ x: s.x, w: r1(s.x2 - s.x) })),
+    planSpans: mergeSpans(ahead.filter((p) => p.on).map((p) => ({ start: Math.max(now, p.start), end: p.start + PLAN_STEP_MS })))
+      .map((s) => ({ x: x(s.start), w: r1(x(s.end) - x(s.start)) }))
+      .filter((s) => s.w > 0),
     stripY: height - 18,
     powerPath: "",
     powerMax: null,
     powerTop: null,
     tempPath: "",
+    predPath: "",
+    floorPath: "",
+    floorPredPath: "",
     tempTicks: [],
     minY: null,
     maxY: null,
@@ -497,12 +578,19 @@ export function priceChart({ schedule, now, cheapLimit = null, threshold = null,
 
   if (showTemp) {
     const inDay = temps.filter((p) => p.t >= start && p.t <= Math.min(end, now));
-    const values = [...inDay.map((p) => p.v), min, max];
+    const floorDay = floors.filter((p) => p.t >= start && p.t <= Math.min(end, now));
+    const pred = ahead.filter((p) => p.temp !== null).map((p) => ({ t: Math.max(now, p.start), v: p.temp }));
+    const floorPred = ahead.filter((p) => p.floor !== null).map((p) => ({ t: Math.max(now, p.start), v: p.floor }));
+    const values = [...inDay, ...floorDay, ...pred, ...floorPred].map((p) => p.v).concat([min, max]);
     const tLo = Math.floor(Math.min(...values) - 0.5);
     const tHi = Math.ceil(Math.max(...values) + 0.5);
     const yT = (v) => r1(plot.y1 - ((v - tLo) / (tHi - tLo)) * (plot.y1 - plot.y0));
     result.tempPath = inDay.map((p, i) => `${i ? "L" : "M"}${x(p.t)} ${yT(p.v)}`).join(" ");
     if (inDay.length) result.tempPath += ` L${x(Math.min(end, now))} ${yT(inDay[inDay.length - 1].v)}`;
+    const line = (points) => points.map((p, i) => `${i ? "L" : "M"}${x(p.t)} ${yT(p.v)}`).join(" ");
+    result.predPath = pred.length > 1 ? line(pred) : "";
+    result.floorPath = floorDay.length > 1 ? line(floorDay) : "";
+    result.floorPredPath = floorPred.length > 1 ? line(floorPred) : "";
     result.minY = yT(min);
     result.maxY = yT(max);
     result.tempTicks = [

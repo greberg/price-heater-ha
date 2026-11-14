@@ -28,7 +28,10 @@
   function draw() {
     wrap.innerHTML = "";
     const lang = document.getElementById("sv").checked ? "sv" : "en";
+    const smart = { smart: "ready", reason: "planned_off", heater: "off" };
     const configs = [
+      ["price-heater-card", {}, smart],
+      ["price-heater-chart-card", {}, smart],
       ["price-heater-card", {}, {}],
       ["price-heater-chart-card", {}, {}],
       ["price-heater-card", {}, { enabled: false, reason: "expensive_price", heater: "off", temp: "19.4", power: "rated" }],

@@ -1,5 +1,5 @@
 // A fake hass with one Price Heater, shared by the JS tests and the preview.
-export function makeHass({ now = Date.now(), lang = "en", reason = "cheap_price", enabled = true, heater = "on", temp = "20.4", power = "sensor" } = {}) {
+export function makeHass({ now = Date.now(), lang = "en", reason = "cheap_price", enabled = true, heater = "on", temp = "20.4", power = "sensor", smart = null } = {}) {
   const midnight = new Date(now);
   midnight.setHours(0, 0, 0, 0);
   const prices = [1.02, 0.85, 0.31, 0.22, 0.27, 0.36, 1.21, 1.52, 1.43, 1.05, 0.93, 0.81,
@@ -20,6 +20,10 @@ export function makeHass({ now = Date.now(), lang = "en", reason = "cheap_price"
     heating_demand: "binary_sensor.price_heater_heating_demand",
     cheap_price: "binary_sensor.price_heater_cheap_price",
   };
+  if (smart) {
+    ids.floor = "sensor.floor_temperature";
+    ids.outdoor = "sensor.outdoor_temperature";
+  }
   if (power) {
     ids.power = "sensor.price_heater_power";
     ids.energy_today = "sensor.price_heater_energy_today";
@@ -50,6 +54,7 @@ export function makeHass({ now = Date.now(), lang = "en", reason = "cheap_price"
       currency: "SEK",
       prices_today,
       entities: ids,
+      ...(smart ? smartAttributes(now, prices, smart) : {}),
     }),
     [ids.heater]: st(ids.heater, heater, { friendly_name: "Radiator" }),
     [ids.temperature]: st(ids.temperature, temp, { unit_of_measurement: "°C" }),
@@ -58,6 +63,10 @@ export function makeHass({ now = Date.now(), lang = "en", reason = "cheap_price"
     [ids.heating_demand]: st(ids.heating_demand, heater),
     [ids.cheap_price]: st(ids.cheap_price, prices_today[hour].cheap ? "on" : "off"),
   };
+  if (smart) {
+    states[ids.floor] = st(ids.floor, "24.6", { unit_of_measurement: "°C" });
+    states[ids.outdoor] = st(ids.outdoor, "-3.5", { unit_of_measurement: "°C" });
+  }
   if (power) {
     states[ids.power] = st(ids.power, String(watts), { unit_of_measurement: "W" });
     states[ids.energy_today] = st(ids.energy_today, "4.37", { unit_of_measurement: "kWh" });
@@ -82,6 +91,14 @@ export function makeHass({ now = Date.now(), lang = "en", reason = "cheap_price"
       { s: "0", lu: (midnight.getTime() + 5.5 * 3600000) / 1000 },
       { s: "1180", lu: (midnight.getTime() + 12 * 3600000) / 1000 },
     ].filter((r) => r.lu * 1000 <= now),
+    ...(smart
+      ? {
+          [ids.floor]: Array.from({ length: 48 }, (_, i) => ({
+            s: String(24 + 1.2 * Math.sin(i / 8)),
+            lu: (midnight.getTime() + i * 1800000) / 1000,
+          })).filter((r) => r.lu * 1000 <= now),
+        }
+      : {}),
     [ids.temperature]: Array.from({ length: 48 }, (_, i) => ({
       s: String(19.6 + 1.6 * Math.sin(i / 6)),
       lu: (midnight.getTime() + i * 1800000) / 1000,
@@ -98,5 +115,45 @@ export function makeHass({ now = Date.now(), lang = "en", reason = "cheap_price"
       callService: (domain, service, data) => calls.push({ domain, service, data }),
       callWS: async () => history,
     },
+  };
+}
+
+/** Status attributes of the smart strategy: a plan from now to tomorrow night. */
+function smartAttributes(now, prices, status) {
+  const step = 15 * 60000;
+  const first = Math.floor(now / step) * step;
+  const plan = [];
+  let air = 20.4;
+  let floor = 24.6;
+  for (let k = 0; k < 32 * 4; k++) {
+    const t = first + k * step;
+    const hour = new Date(t).getHours();
+    const price = prices[hour] * (k > 48 ? 1.1 : 1);
+    const on = price < 0.4 || (hour >= 22 && hour < 24 && k > 40);
+    plan.push({ start: new Date(t).toISOString(), on, price, temperature: Math.round(air * 100) / 100, floor: Math.round(floor * 100) / 100 });
+    floor += on ? 0.28 : -0.06;
+    air += (floor - air) * 0.02 - 0.012;
+  }
+  const next = plan.find((p) => p.on !== plan[0].on);
+  return {
+    strategy: "smart",
+    floor_temperature: 24.6,
+    outdoor_temperature: -3.5,
+    smart: {
+      status,
+      plan:
+        status === "ready"
+          ? {
+              heat_hours: plan.filter((p) => p.on).length / 4,
+              cost: 3.07,
+              next_change: next ? next.start : null,
+              lowest_temperature: 20.1,
+              highest_temperature: 22.4,
+              shortfall: null,
+              until: new Date(first + plan.length * step).toISOString(),
+            }
+          : null,
+    },
+    plan: status === "ready" ? plan : [],
   };
 }

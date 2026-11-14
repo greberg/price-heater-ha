@@ -24,3 +24,17 @@ DEFAULT_CHEAP_HOURS = 6.0
 DEFAULT_MIN_CYCLE = 5.0
 
 HEATER_DOMAINS = ["switch", "input_boolean", "climate"]
+
+# Smart strategy
+CONF_STRATEGY = "strategy"
+STRATEGY_SIMPLE = "simple"
+STRATEGY_SMART = "smart"
+STRATEGIES = [STRATEGY_SIMPLE, STRATEGY_SMART]
+CONF_WEATHER = "weather_entity"
+CONF_OUTDOOR_SENSOR = "outdoor_sensor"
+CONF_FLOOR_SENSOR = "floor_sensor"
+CONF_SOLAR_SENSOR = "solar_sensor"
+CONF_MAX_FLOOR_TEMP = "max_floor_temp"
+DEFAULT_MAX_FLOOR_TEMP = 28.0
+# The plan aims this far above the minimum, so model errors don't reach it.
+PLAN_MARGIN = 0.2

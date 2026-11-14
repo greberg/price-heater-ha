@@ -6,7 +6,12 @@
 A custom integration that turns a heater **on or off based on room temperature and electricity price**,
 with two dashboard cards included.
 
-## How it decides
+There are two strategies, chosen per heater under **Configure**:
+
+- **Simple** – heat in the day's cheapest hours, inside your min/max band.
+- **Smart** – learns how your house heats and cools, and plans the cheapest heating ahead with electricity prices, the weather forecast and the sun. Built for floor heating in concrete: it stores heat in the slab in cheap hours and coasts through expensive ones, and it heats less when a sunny day is coming.
+
+## How it decides (simple)
 
 Checked every minute and whenever the temperature, price or heater changes, in this order:
 
@@ -24,6 +29,39 @@ Electricity counts as **cheap** when either is true:
 - the current price is at or below the optional **price threshold**.
 
 A **minimum cycle time** (default 5 min) stops the heater from flapping. The min/max temperature limits ignore it.
+
+## Smart strategy
+
+**What it needs:** the indoor temperature sensor and price sensor as for simple, plus a **weather** entity with a forecast (Met.no, SMHI, …) or an **outdoor temperature** sensor. Strongly recommended:
+
+- a **floor / concrete temperature** sensor (many floor thermostats have a floor probe) – this is what lets it plan heat storage in the slab;
+- a **sun sensor** (lux, W/m² or solar panel production) – teaches it how much the sun warms the room.
+
+**How it learns.** From the last 10 days of Home Assistant's own history (the recorder) it fits a model of the house as two connected heat stores:
+
+```
+floor heating ──► concrete slab ──► room air ──► outdoors
+                                       ▲
+                                      sun
+```
+
+how fast the heating warms the slab, how fast the slab warms the air, how fast the air loses heat outdoors, and how much the sun adds (to the air only – which is why a sunny lunch warms the room but not the concrete). Both temperatures are measured, so this is a plain regression that refreshes every 6 hours. It needs about **two days** of history with the heater both on and off; until then the simple rules apply and the card says it is learning. Without a floor sensor it uses a single air store.
+
+**How it plans.** Every 15 minutes, for the next 24 hours or more (all known prices; unpublished ones are assumed to repeat the day before), it combines:
+
+- prices for each 15 minutes,
+- outdoor temperature from the forecast, corrected by your outdoor sensor,
+- sun from the sun's path at your location and the forecast clouds, corrected by your sun sensor for the next hours,
+
+and simulates the air and slab temperatures. Whenever the air would drop below the minimum (+0.2 °C margin) it adds heating at the step with the **lowest price per degree it adds at that moment**. Because the slab is slow, that is often hours earlier, at night, so the concrete carries the heat through the expensive hours. It never plans heating that would push the air over the maximum or the floor over the **maximum floor temperature** (default 28 °C; about 27 °C for wooden floors). Zero or negative prices are used to store extra heat when it fits.
+
+The hard limits always win over the plan: below the minimum it heats, at the maximum or the floor limit it stops.
+
+**Tips:**
+
+- Set the floor thermostat's own setpoint high (or to its max) so Price Heater, not the thermostat, decides when it heats; keep its floor limit as a safety net.
+- The status sensor's `smart` attribute shows the learned model (`heat`, `slab_air`, `air_slab`, `air_out`, `air_sun` in °C per hour, and `rmse`, the typical 1-hour prediction error) and a plan summary; `plan` has every 15-minute step with the predicted temperatures.
+- The chart card shows the plan: planned heating as a dashed strip, forecast room and floor temperature as dashed lines, and tomorrow's prices once published.
 
 ## Supported devices
 
@@ -54,7 +92,7 @@ Then go to **Settings → Devices & services → Add integration → Price Heate
 |---|---|
 | `climate.<name>` | The Price Heater as a thermostat, for the standard thermostat card, voice assistants and apps. **Heat** runs the automation; **Off** pauses it and turns the heater off. The target *range* is the min/max band: dragging it changes **Minimum/Maximum temperature** (saved as settings). It shows heating or idle from the real heater. |
 | `switch.<name>_automation` | Turn the automatic control on or off. When off, the integration only reports and never touches the heater. Use it for manual override. |
-| `sensor.<name>_status` | Why the heater is on or off. Attributes show temperature, price, price rank today, the cheap-price limit and more. |
+| `sensor.<name>_status` | Why the heater is on or off. Attributes show temperature, price, price rank today, the cheap-price limit and more; with smart also the floor and outdoor temperature, the learned model and the plan. |
 | `binary_sensor.<name>_heating_demand` | What the rules want right now. |
 | `binary_sensor.<name>_cheap_price` | Whether electricity counts as cheap right now. |
 | `sensor.<name>_power` | The heater's power now in W (with a power sensor or rated power). |

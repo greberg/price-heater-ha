@@ -116,3 +116,40 @@ test("problems are shown instead of the card", () => {
   assert.match(card.shadowRoot.innerHTML, /No Price Heater found/);
   assert.throws(() => card.setConfig({ entity: "switch.x" }));
 });
+
+test("status card shows the smart plan, floor and outdoor", () => {
+  const card = document.createElement("price-heater-card");
+  card.setConfig({});
+  card.hass = makeHass({ now: new Date(2026, 10, 14, 10, 0).getTime(), reason: "planned_off", heater: "off", smart: "ready" }).hass;
+  const html = card.shadowRoot.innerHTML;
+  assert.match(html, /Off – stored heat lasts/);
+  assert.match(html, /Floor/);
+  assert.match(html, /24\.6/);
+  assert.match(html, /-3\.5|−3\.5/);
+  assert.match(html, /Next heating \d\d:\d\d/);
+  assert.match(html, /Next \d+ h: \d+(\.\d)? h heat · 3\.07 SEK/);
+});
+
+test("status card says smart is still learning", () => {
+  const card = document.createElement("price-heater-card");
+  card.setConfig({});
+  card.hass = makeHass({ lang: "sv", smart: "learning" }).hass;
+  assert.match(card.shadowRoot.innerHTML, /Smart lär sig/);
+});
+
+test("chart card draws the plan, forecast and floor into tomorrow", async () => {
+  const now = new Date(2026, 10, 14, 10, 0).getTime();
+  const card = document.createElement("price-heater-chart-card");
+  card.setConfig({});
+  card.hass = makeHass({ now, smart: "ready" }).hass;
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  const html = card.shadowRoot.innerHTML;
+  assert.match(html, /class="strip-plan"/);
+  assert.match(html, /class="temp pred"/);
+  assert.match(html, /class="floor"/);
+  assert.match(html, /class="floor pred"/);
+  assert.match(html, /Planned heating/);
+  // bars reach into tomorrow: more than 24 hourly bars
+  assert.ok((html.match(/class="bar /g) || []).length > 24);
+});

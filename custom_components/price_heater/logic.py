@@ -27,6 +27,10 @@ REASON_CHEAP = "cheap_price"
 REASON_NEAR_MAX = "near_max"
 REASON_EXPENSIVE = "expensive_price"
 REASON_PRICE_UNAVAILABLE = "price_unavailable"
+# Smart strategy (see smart.py)
+REASON_PLANNED_HEAT = "planned_heat"
+REASON_PLANNED_OFF = "planned_off"
+REASON_FLOOR_MAX = "floor_max"
 
 ALL_REASONS = [
     REASON_TEMPERATURE_UNAVAILABLE,
@@ -36,16 +40,20 @@ ALL_REASONS = [
     REASON_NEAR_MAX,
     REASON_EXPENSIVE,
     REASON_PRICE_UNAVAILABLE,
+    REASON_PLANNED_HEAT,
+    REASON_PLANNED_OFF,
+    REASON_FLOOR_MAX,
 ]
 
 # Reasons that protect comfort/safety and may bypass the minimum cycle time.
-OVERRIDE_REASONS = {REASON_BELOW_MIN, REASON_ABOVE_MAX}
+OVERRIDE_REASONS = {REASON_BELOW_MIN, REASON_ABOVE_MAX, REASON_FLOOR_MAX}
 
 # Attribute names used by popular price integrations for today's price list:
 #   raw_today    - Nordpool (HACS), Energi Data Service
 #   today        - Nordpool (HACS)
 #   prices_today - ENTSO-e
 PRICE_LIST_ATTRIBUTES = ("raw_today", "today", "prices_today")
+TOMORROW_LIST_ATTRIBUTES = ("raw_tomorrow", "tomorrow", "prices_tomorrow")
 VALUE_KEYS = ("value", "price", "total", "price_per_kwh")
 START_KEYS = ("start", "startsAt", "time", "hour")
 
@@ -99,9 +107,13 @@ def _to_datetime(value: Any, tz: Optional[tzinfo]) -> Optional[datetime]:
     return result
 
 
-def extract_price_slots(attributes: Mapping[str, Any], now: datetime) -> List[Slot]:
-    """Read today's price list from known sensor attributes."""
-    for key in PRICE_LIST_ATTRIBUTES:
+def extract_price_slots(
+    attributes: Mapping[str, Any],
+    now: datetime,
+    keys: Sequence[str] = PRICE_LIST_ATTRIBUTES,
+) -> List[Slot]:
+    """Read today's (or, with other ``keys``, tomorrow's) price list."""
+    for key in keys:
         raw = attributes.get(key)
         if not isinstance(raw, (list, tuple)) or not raw:
             continue

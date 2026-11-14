@@ -38,6 +38,15 @@ from .const import (
     CONF_POWER_SENSOR,
     CONF_PRICE_THRESHOLD,
     CONF_TEMP_SENSOR,
+    CONF_FLOOR_SENSOR,
+    CONF_MAX_FLOOR_TEMP,
+    CONF_OUTDOOR_SENSOR,
+    CONF_SOLAR_SENSOR,
+    CONF_STRATEGY,
+    CONF_WEATHER,
+    DEFAULT_MAX_FLOOR_TEMP,
+    STRATEGY_SIMPLE,
+    STRATEGY_SMART,
     DEFAULT_CHEAP_HOURS,
     DEFAULT_HYSTERESIS,
     DEFAULT_MAX_TEMP,
@@ -59,6 +68,8 @@ from .logic import (
     price_schedule,
     to_float,
 )
+from .planner import FORECAST_INTERVAL, REFIT_INTERVAL, SmartPlanner
+from .smart import smart_decide
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -93,6 +104,22 @@ class PriceHeaterController:
         self.power_sensor: str | None = source.get(CONF_POWER_SENSOR) or None
         rated = to_float(source.get(CONF_HEATER_POWER))
         self.rated_power = rated if rated and rated > 0 else None
+        self.strategy: str = config.get(CONF_STRATEGY, STRATEGY_SIMPLE)
+        self.smart: SmartPlanner | None = None
+        if self.strategy == STRATEGY_SMART:
+            floor_max = to_float(source.get(CONF_MAX_FLOOR_TEMP))
+            self.smart = SmartPlanner(
+                hass,
+                name=entry.title,
+                heater=self.heater_entity,
+                air_sensor=self.temp_sensor,
+                weather=source.get(CONF_WEATHER) or None,
+                outdoor_sensor=source.get(CONF_OUTDOOR_SENSOR) or None,
+                floor_sensor=source.get(CONF_FLOOR_SENSOR) or None,
+                solar_sensor=source.get(CONF_SOLAR_SENSOR) or None,
+                power_sensor=self.power_sensor,
+                floor_max=floor_max if floor_max is not None else DEFAULT_MAX_FLOOR_TEMP,
+            )
         self.min_cycle = timedelta(
             minutes=float(config.get(CONF_MIN_CYCLE, DEFAULT_MIN_CYCLE))
         )
@@ -130,6 +157,7 @@ class PriceHeaterController:
                         self.temp_sensor,
                         self.price_sensor,
                         self.power_sensor,
+                        *(self.smart.tracked_entities if self.smart else []),
                     )
                     if entity
                 ],
@@ -142,7 +170,42 @@ class PriceHeaterController:
                 self.hass, self._handle_interval, EVALUATE_INTERVAL
             )
         )
+        if self.smart:
+            # Learn and fetch the forecast in the background; until the model
+            # is ready the simple rules apply.
+            self.entry.async_create_background_task(
+                self.hass, self._async_smart_refresh(learn=True), "price_heater_learn"
+            )
+            self._unsubs.append(
+                async_track_time_interval(
+                    self.hass, self._handle_refit, REFIT_INTERVAL
+                )
+            )
+            self._unsubs.append(
+                async_track_time_interval(
+                    self.hass, self._handle_forecast, FORECAST_INTERVAL
+                )
+            )
         await self.async_evaluate()
+
+    async def _async_smart_refresh(self, learn: bool) -> None:
+        assert self.smart is not None
+        await self.smart.async_update_forecast()
+        if learn:
+            await self.smart.async_refit()
+        await self.async_evaluate()
+
+    @callback
+    def _handle_refit(self, _now: datetime) -> None:
+        self.entry.async_create_background_task(
+            self.hass, self._async_smart_refresh(learn=True), "price_heater_learn"
+        )
+
+    @callback
+    def _handle_forecast(self, _now: datetime) -> None:
+        self.entry.async_create_background_task(
+            self.hass, self._async_smart_refresh(learn=False), "price_heater_forecast"
+        )
 
     @callback
     def async_stop(self) -> None:
@@ -188,6 +251,8 @@ class PriceHeaterController:
         options[CONF_MIN_TEMP] = min_temp
         options[CONF_MAX_TEMP] = max_temp
         self.config = {**self.entry.data, **options}
+        if self.smart:
+            self.smart.invalidate()
         self.hass.config_entries.async_update_entry(self.entry, options=options)
         await self.async_evaluate()
 
@@ -216,14 +281,28 @@ class PriceHeaterController:
             heater_state = self.hass.states.get(self.heater_entity)
             self.heater_on = _heater_is_on(heater_state)
 
-            self.decision = decide(
-                self.temperature,
-                self.price_info.is_cheap,
-                bool(self.heater_on),
-                self.min_temp,
-                self.max_temp,
-                self.hysteresis,
-            )
+            self.decision = None
+            if self.smart:
+                self.smart.update(now, self.temperature, attrs, self.min_temp, self.max_temp)
+                self.decision = smart_decide(
+                    self.smart.plan,
+                    self.temperature,
+                    self.smart.floor,
+                    bool(self.heater_on),
+                    self.min_temp,
+                    self.max_temp,
+                    self.hysteresis,
+                    self.smart.floor_max,
+                )
+            if self.decision is None:
+                self.decision = decide(
+                    self.temperature,
+                    self.price_info.is_cheap,
+                    bool(self.heater_on),
+                    self.min_temp,
+                    self.max_temp,
+                    self.hysteresis,
+                )
             self.waiting_for_cycle = False
 
             self.power = heater_power(self._sensor_watts(), self.rated_power, self.heater_on)
@@ -336,6 +415,11 @@ class PriceHeaterController:
             "cheap_hours": self.cheap_hours,
             "price_unit": self.price_unit,
             "prices_today": self.schedule,
+            "strategy": self.strategy,
+            "floor_temperature": self.smart.floor if self.smart else None,
+            "outdoor_temperature": self.smart.outdoor if self.smart else None,
+            "smart": self.smart.attributes(self.rated_power) if self.smart else None,
+            "plan": self.smart.plan.steps() if self.smart and self.smart.plan else [],
             "entities": self._entity_map(),
         }
 
@@ -349,6 +433,15 @@ class PriceHeaterController:
         }
         if self.power_sensor:
             result["power_meter"] = self.power_sensor
+        if self.smart:
+            for role, entity in (
+                ("floor", self.smart.floor_sensor),
+                ("outdoor", self.smart.outdoor_sensor),
+                ("weather", self.smart.weather),
+                ("solar", self.smart.solar_sensor),
+            ):
+                if entity:
+                    result[role] = entity
         for platform, key in (
             ("sensor", "status"),
             ("climate", "thermostat"),

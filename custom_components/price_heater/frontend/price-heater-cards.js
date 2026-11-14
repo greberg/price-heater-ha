@@ -49,6 +49,8 @@ const STYLES = `
   button.link.power-now { margin-left: auto; align-items: flex-end; text-align: right; }
   .power-now .value { font-size: 22px; line-height: 28px; white-space: nowrap; color: var(--primary-text-color); }
   .power-now.on .value { color: var(--state-climate-heat-color, #ff8100); }
+  .grid.smart { grid-template-columns: minmax(64px, auto) minmax(64px, auto) 1fr; }
+  .value.plan { display: flex; flex-direction: column; font-size: 14px; }
   .reason { font-size: 14px; color: var(--primary-text-color); }
   .reason.heating { color: var(--state-climate-heat-color, #ff8100); }
   .reason.problem { color: var(--error-color, #db4437); }
@@ -103,6 +105,11 @@ const STYLES = `
   .now { stroke: var(--primary-text-color); stroke-width: 1; opacity: 0.6; }
   .strip-bg { fill: var(--divider-color); }
   .strip-on { fill: var(--state-climate-heat-color, #ff8100); }
+  .strip-plan { fill: color-mix(in srgb, var(--state-climate-heat-color, #ff8100) 45%, transparent); stroke: var(--state-climate-heat-color, #ff8100); stroke-width: 0.75; stroke-dasharray: 2 2; }
+  .legend i.plan { background: color-mix(in srgb, var(--state-climate-heat-color, #ff8100) 45%, transparent); outline: 1px dashed var(--state-climate-heat-color, #ff8100); }
+  .legend i.dashed { background: repeating-linear-gradient(90deg, var(--secondary-text-color) 0 3px, transparent 3px 5px); }
+  .floor { fill: none; stroke: var(--secondary-text-color); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+  .pred { stroke-dasharray: 4 3; opacity: 0.85; }
   .temp { fill: none; stroke: var(--info-color, #039be5); stroke-width: 2; vector-effect: non-scaling-stroke; }
   .temp-limit { stroke: var(--info-color, #039be5); stroke-width: 1; stroke-dasharray: 2 4; opacity: 0.6; }
 `;
@@ -200,7 +207,7 @@ class PriceHeaterBaseCard extends HTMLElement {
       .map(
         (a) =>
           `<div class="alert ${a.level}" data-more="${esc(a.key)}" role="button" tabindex="0"><ha-icon icon="${icons[a.level]}"></ha-icon><span>${esc(
-            this.t(a.text),
+            this.t(a.text, a.time ? { time: formatClock(a.time, this.loc) } : {}),
           )}</span></div>`,
       )
       .join("");
@@ -285,6 +292,34 @@ class PriceHeaterCard extends PriceHeaterBaseCard {
       </button>`;
   }
 
+  renderSmart(m, now = Date.now()) {
+    if (!m.smart) return "";
+    const deg = (v) => (v === null ? "–" : `${this.n(v, 1)}<span class="unit">°</span>`);
+    let plan = "–";
+    if (m.planOn !== null) {
+      const clock = (t) => formatClock(t, this.loc);
+      const next = m.planOn
+        ? this.t("label.heating_until", { time: m.planNext ? clock(m.planNext) : clock(m.planUntil) })
+        : m.planNext
+          ? this.t("label.next_heating", { time: clock(m.planNext) })
+          : this.t("label.no_heating");
+      const span = m.planUntil ? Math.round((m.planUntil - now) / 3600000) : null;
+      const total =
+        m.planHours === null || span === null
+          ? ""
+          : m.planCost !== null
+            ? this.t("label.plan_total", { span, hours: this.n(m.planHours, 1), cost: `${this.n(m.planCost, 2)} ${m.currency}`.trim() })
+            : this.t("label.plan_hours", { span, hours: this.n(m.planHours, 1) });
+      plan = `${esc(next)}${total ? `<span class="sub">${esc(total)}</span>` : ""}`;
+    }
+    return `<div class="divider"></div>
+      <div class="grid smart">
+        ${m.floor !== null ? this.stat("floor", this.t("label.floor"), deg(m.floor)) : ""}
+        ${m.outdoor !== null ? this.stat(this._ids.outdoor ? "outdoor" : "weather", this.t("label.outdoor"), deg(m.outdoor)) : ""}
+        ${this.stat("status", this.t("label.plan"), plan, "plan")}
+      </div>`;
+  }
+
   renderConsumption(m) {
     if (!m.hasPower) return `<div class="divider"></div><span class="sub">${esc(this.t("label.no_power"))}</span>`;
     const energy = m.energy === null ? "–" : `${this.n(m.energy, 2)} <span class="unit">kWh</span>`;
@@ -331,6 +366,7 @@ class PriceHeaterCard extends PriceHeaterBaseCard {
       </div>
       ${gaugeHtml}
       <div class="grid">${stats}</div>
+      ${this.renderSmart(m)}
       ${this.renderConsumption(m)}
       ${m.alerts.length ? `<div class="alerts">${this.alertList(m.alerts)}</div>` : ""}
     </div>`;
@@ -380,7 +416,7 @@ class PriceHeaterChartCard extends PriceHeaterBaseCard {
 
   async _loadHistory(start) {
     if (this._loading || !this._hass?.callWS) return;
-    const ids = [this._ids.heater, this._ids.temperature, this._ids.power].filter(Boolean);
+    const ids = [this._ids.heater, this._ids.temperature, this._ids.power, this._ids.floor].filter(Boolean);
     if (!ids.length) return;
     this._loading = true;
     try {
@@ -412,8 +448,10 @@ class PriceHeaterChartCard extends PriceHeaterBaseCard {
     const showTemp = this._config.show_temperature !== false;
     const showPower = this._config.show_power !== false && m.hasPower && !!this._ids.power;
 
+    const plan = Array.isArray(status?.attributes?.plan) ? status.attributes.plan : [];
     let spans = [];
     let temps = [];
+    let floors = [];
     let power = [];
     if (dayStart !== null && (showHistory || showTemp || showPower)) {
       if (!this._history || this._history.start !== dayStart || this._historyStale) {
@@ -424,6 +462,10 @@ class PriceHeaterChartCard extends PriceHeaterBaseCard {
       if (showTemp) temps = numberPoints(data[this._ids.temperature]);
       // The live state extends the history to now.
       if (showTemp && m.temperature !== null) temps.push({ t: now, v: m.temperature });
+      if (showTemp && this._ids.floor) {
+        floors = numberPoints(data[this._ids.floor]);
+        if (m.floor !== null) floors.push({ t: now, v: m.floor });
+      }
       if (showPower) {
         power = numberPoints(data[this._ids.power]);
         if (m.power !== null) power.push({ t: now, v: m.power });
@@ -437,7 +479,9 @@ class PriceHeaterChartCard extends PriceHeaterBaseCard {
       threshold: m.threshold,
       spans,
       temps,
+      floors,
       power,
+      plan: showTemp || showHistory ? plan : [],
       min: m.min,
       max: m.max,
     });
@@ -462,10 +506,13 @@ class PriceHeaterChartCard extends PriceHeaterBaseCard {
     }
     if (chart.limitY !== null) parts.push(`<line class="limit" x1="${p.x0}" x2="${p.x1}" y1="${chart.limitY}" y2="${chart.limitY}"/>`);
     if (chart.thresholdY !== null) parts.push(`<line class="threshold" x1="${p.x0}" x2="${p.x1}" y1="${chart.thresholdY}" y2="${chart.thresholdY}"/>`);
-    if (chart.tempPath) {
+    if (chart.tempTicks.length && showTemp) {
       parts.push(`<line class="temp-limit" x1="${p.x0}" x2="${p.x1}" y1="${chart.minY}" y2="${chart.minY}"/>`);
       parts.push(`<line class="temp-limit" x1="${p.x0}" x2="${p.x1}" y1="${chart.maxY}" y2="${chart.maxY}"/>`);
-      parts.push(`<path class="temp" d="${chart.tempPath}"/>`);
+      if (chart.floorPath) parts.push(`<path class="floor" d="${chart.floorPath}"><title>${esc(this.t("label.floor"))}</title></path>`);
+      if (chart.floorPredPath) parts.push(`<path class="floor pred" d="${chart.floorPredPath}"><title>${esc(this.t("label.floor"))} · ${esc(this.t("label.forecast"))}</title></path>`);
+      if (chart.tempPath) parts.push(`<path class="temp" d="${chart.tempPath}"/>`);
+      if (chart.predPath) parts.push(`<path class="temp pred" d="${chart.predPath}"><title>${esc(this.t("label.temperature"))} · ${esc(this.t("label.forecast"))}</title></path>`);
       for (const tick of chart.tempTicks) parts.push(`<text x="${p.x1 + 4}" y="${tick.y + 3}">${esc(this.n(tick.value, 1))}°</text>`);
     }
     if (chart.powerPath) {
@@ -475,6 +522,7 @@ class PriceHeaterChartCard extends PriceHeaterBaseCard {
     if (showHistory) {
       parts.push(`<rect class="strip-bg" x="${p.x0}" y="${chart.stripY}" width="${p.x1 - p.x0}" height="6" rx="2"/>`);
       for (const s of chart.spans) parts.push(`<rect class="strip-on" x="${s.x}" y="${chart.stripY}" width="${s.w}" height="6" rx="2"/>`);
+      for (const s of chart.planSpans) parts.push(`<rect class="strip-plan" x="${s.x}" y="${chart.stripY}" width="${s.w}" height="6" rx="2"><title>${esc(this.t("label.planned"))}</title></rect>`);
     }
     if (chart.nowX !== null) {
       parts.push(`<line class="now" x1="${chart.nowX}" x2="${chart.nowX}" y1="${p.y0}" y2="${showHistory ? chart.stripY + 6 : p.y1}"/>`);
@@ -487,7 +535,10 @@ class PriceHeaterChartCard extends PriceHeaterBaseCard {
       `<span><i style="background:var(--success-color,#43a047)"></i>${esc(this.t("label.cheap"))}</span>`,
       `<span><i style="background:var(--warning-color,#ffa600);opacity:.6"></i>${esc(this.t("label.expensive"))}</span>`,
       showHistory ? `<span><i style="background:var(--state-climate-heat-color,#ff8100)"></i>${esc(this.t("label.heater_ran"))}</span>` : "",
-      chart.tempPath ? `<span><i class="line" style="background:var(--info-color,#039be5)"></i>${esc(this.t("label.temperature"))}</span>` : "",
+      showHistory && chart.planSpans.length ? `<span><i class="plan"></i>${esc(this.t("label.planned"))}</span>` : "",
+      showTemp && (chart.tempPath || chart.predPath) ? `<span><i class="line" style="background:var(--info-color,#039be5)"></i>${esc(this.t("label.temperature"))}</span>` : "",
+      showTemp && (chart.floorPath || chart.floorPredPath) ? `<span><i class="line" style="background:var(--secondary-text-color)"></i>${esc(this.t("label.floor"))}</span>` : "",
+      showTemp && chart.predPath ? `<span><i class="line dashed"></i>${esc(this.t("label.forecast"))}</span>` : "",
       chart.powerPath ? `<span><i style="background:var(--state-climate-heat-color,#ff8100);opacity:.5"></i>${esc(this.t("label.power_used"))}</span>` : "",
       unit ? `<span>${esc(unit.trim())}</span>` : "",
     ].join("");

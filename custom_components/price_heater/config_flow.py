@@ -28,6 +28,16 @@ from .const import (
     CONF_PRICE_SENSOR,
     CONF_PRICE_THRESHOLD,
     CONF_TEMP_SENSOR,
+    CONF_FLOOR_SENSOR,
+    CONF_MAX_FLOOR_TEMP,
+    CONF_OUTDOOR_SENSOR,
+    CONF_SOLAR_SENSOR,
+    CONF_STRATEGY,
+    CONF_WEATHER,
+    DEFAULT_MAX_FLOOR_TEMP,
+    STRATEGIES,
+    STRATEGY_SIMPLE,
+    STRATEGY_SMART,
     DEFAULT_CHEAP_HOURS,
     DEFAULT_HYSTERESIS,
     DEFAULT_MAX_TEMP,
@@ -91,6 +101,28 @@ def _schema() -> dict:
                 mode=selector.NumberSelectorMode.BOX,
             )
         ),
+        vol.Required(CONF_STRATEGY, default=STRATEGY_SIMPLE): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=STRATEGIES,
+                translation_key=CONF_STRATEGY,
+                mode=selector.SelectSelectorMode.LIST,
+            )
+        ),
+        vol.Optional(CONF_WEATHER): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="weather")
+        ),
+        vol.Optional(CONF_OUTDOOR_SENSOR): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="sensor", device_class="temperature")
+        ),
+        vol.Optional(CONF_FLOOR_SENSOR): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="sensor", device_class="temperature")
+        ),
+        vol.Optional(CONF_SOLAR_SENSOR): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain="sensor", device_class=["illuminance", "irradiance", "power"]
+            )
+        ),
+        vol.Optional(CONF_MAX_FLOOR_TEMP, default=DEFAULT_MAX_FLOOR_TEMP): _temp_selector(15, 40, 0.5),
     }
 
 
@@ -98,7 +130,13 @@ def _validate(user_input: dict[str, Any]) -> dict[str, str]:
     error = range_error(
         user_input[CONF_MIN_TEMP], user_input[CONF_MAX_TEMP], user_input[CONF_HYSTERESIS]
     )
-    return {"base": error} if error else {}
+    if error:
+        return {"base": error}
+    if user_input.get(CONF_STRATEGY) == STRATEGY_SMART and not (
+        user_input.get(CONF_WEATHER) or user_input.get(CONF_OUTDOOR_SENSOR)
+    ):
+        return {"base": "smart_needs_outdoor"}
+    return {}
 
 
 class PriceHeaterConfigFlow(ConfigFlow, domain=DOMAIN):

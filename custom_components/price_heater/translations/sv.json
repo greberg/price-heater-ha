@@ -16,7 +16,13 @@
           "price_threshold": "Alltid billigt vid eller under detta pris (valfritt)",
           "min_cycle_minutes": "Minsta tid mellan omslag",
           "power_sensor": "Effektsensor (valfri)",
-          "heater_power": "Elementets effekt (valfri)"
+          "heater_power": "Elementets effekt (valfri)",
+          "strategy": "Strategi",
+          "weather_entity": "Väderprognos (smart)",
+          "outdoor_sensor": "Utetemperaturgivare (smart)",
+          "floor_sensor": "Golv-/betongtemperaturgivare (smart)",
+          "solar_sensor": "Solgivare: lux, W/m² eller solelsproduktion (smart)",
+          "max_floor_temp": "Högsta golvtemperatur (smart)"
         },
         "data_description": {
           "price_sensor": "Tillståndet ska vara aktuellt pris. För 'billigaste timmar' behövs även dagens prislista som attribut (raw_today, today eller prices_today), som Nordpool (HACS), Energi Data Service och ENTSO-e har.",
@@ -26,13 +32,20 @@
           "cheap_hours": "Värm under så många av dygnets billigaste timmar (0 stänger av).",
           "min_cycle_minutes": "Skyddar reläer och kompressorer. Min/max-gränserna ignorerar detta.",
           "power_sensor": "En mätare på elementet, t.ex. en smart plugg. Ger exakt effekt, energi och kostnad.",
-          "heater_power": "Utan mätare: elementets märkeffekt, räknas medan det är på."
+          "heater_power": "Utan mätare: elementets märkeffekt, räknas medan det är på.",
+          "strategy": "Enkel: värm under de billigaste timmarna. Smart: lär sig hur huset värms och kyls av dess historik och planerar den billigaste uppvärmningen framåt med elpris, väderprognos och sol - lagrar värme i betongen inför dyra timmar. Smart använder de enkla reglerna tills den lärt sig nog (ungefär två dygns historik).",
+          "weather_entity": "Ger utetemperatur och moln framåt. Smart behöver den eller en utegivare.",
+          "outdoor_sensor": "Temperaturen ute just nu; justerar prognosen för din plats.",
+          "floor_sensor": "Med golvvärme: en givare i eller på plattan. Låter den smarta planen lagra värme i betongen.",
+          "solar_sensor": "Hur starkt solen lyser på huset. Lär sig hur mycket solen värmer; utan den används solens bana och prognosens moln.",
+          "max_floor_temp": "Värmen är aldrig på över denna golvtemperatur (trägolv: cirka 27 °C)."
         }
       }
     },
     "error": {
       "min_not_below_max": "Minimitemperaturen måste vara lägre än maxtemperaturen.",
-      "hysteresis_too_large": "Hysteresen måste vara mindre än halva avståndet mellan min- och maxtemperatur."
+      "hysteresis_too_large": "Hysteresen måste vara mindre än halva avståndet mellan min- och maxtemperatur.",
+      "smart_needs_outdoor": "Smart behöver en väderprognos eller en utetemperaturgivare."
     },
     "abort": {
       "already_configured": "Detta element styrs redan av Price Heater."
@@ -53,17 +66,30 @@
           "price_threshold": "Alltid billigt vid eller under detta pris (valfritt)",
           "min_cycle_minutes": "Minsta tid mellan omslag",
           "power_sensor": "Effektsensor (valfri)",
-          "heater_power": "Elementets effekt (valfri)"
+          "heater_power": "Elementets effekt (valfri)",
+          "strategy": "Strategi",
+          "weather_entity": "Väderprognos (smart)",
+          "outdoor_sensor": "Utetemperaturgivare (smart)",
+          "floor_sensor": "Golv-/betongtemperaturgivare (smart)",
+          "solar_sensor": "Solgivare: lux, W/m² eller solelsproduktion (smart)",
+          "max_floor_temp": "Högsta golvtemperatur (smart)"
         },
         "data_description": {
           "power_sensor": "En mätare på elementet, t.ex. en smart plugg. Ger exakt effekt, energi och kostnad.",
-          "heater_power": "Utan mätare: elementets märkeffekt, räknas medan det är på."
+          "heater_power": "Utan mätare: elementets märkeffekt, räknas medan det är på.",
+          "strategy": "Enkel: värm under de billigaste timmarna. Smart: lär sig hur huset värms och kyls av dess historik och planerar den billigaste uppvärmningen framåt med elpris, väderprognos och sol - lagrar värme i betongen inför dyra timmar. Smart använder de enkla reglerna tills den lärt sig nog (ungefär två dygns historik).",
+          "weather_entity": "Ger utetemperatur och moln framåt. Smart behöver den eller en utegivare.",
+          "outdoor_sensor": "Temperaturen ute just nu; justerar prognosen för din plats.",
+          "floor_sensor": "Med golvvärme: en givare i eller på plattan. Låter den smarta planen lagra värme i betongen.",
+          "solar_sensor": "Hur starkt solen lyser på huset. Lär sig hur mycket solen värmer; utan den används solens bana och prognosens moln.",
+          "max_floor_temp": "Värmen är aldrig på över denna golvtemperatur (trägolv: cirka 27 °C)."
         }
       }
     },
     "error": {
       "min_not_below_max": "Minimitemperaturen måste vara lägre än maxtemperaturen.",
-      "hysteresis_too_large": "Hysteresen måste vara mindre än halva avståndet mellan min- och maxtemperatur."
+      "hysteresis_too_large": "Hysteresen måste vara mindre än halva avståndet mellan min- och maxtemperatur.",
+      "smart_needs_outdoor": "Smart behöver en väderprognos eller en utetemperaturgivare."
     }
   },
   "entity": {
@@ -95,7 +121,10 @@
           "cheap_price": "Billigt - värmer",
           "near_max": "Billigt, men nära max",
           "expensive_price": "Dyrt - väntar",
-          "price_unavailable": "Pris saknas"
+          "price_unavailable": "Pris saknas",
+          "planned_heat": "Planerad värme",
+          "planned_off": "Av - enligt plan",
+          "floor_max": "Golvet vid max - av"
         }
       },
       "power": {
@@ -115,6 +144,14 @@
     },
     "hysteresis_too_large": {
       "message": "Skillnaden mellan lägsta och högsta temperatur måste vara mer än dubbla hysteresen ({hysteresis} °C)."
+    }
+  },
+  "selector": {
+    "strategy": {
+      "options": {
+        "simple": "Enkel - billigaste timmarna",
+        "smart": "Smart - planera med väder, sol och lagrad värme"
+      }
     }
   }
 }
