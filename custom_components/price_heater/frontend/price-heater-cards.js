@@ -15,6 +15,7 @@ const {
   langOf,
   localeOf,
   numberPoints,
+  planTimeline,
   onSpans,
   priceChart,
   registrationLang,
@@ -49,6 +50,12 @@ const STYLES = `
   button.link.power-now { margin-left: auto; align-items: flex-end; text-align: right; }
   .power-now .value { font-size: 22px; line-height: 28px; white-space: nowrap; color: var(--primary-text-color); }
   .power-now.on .value { color: var(--state-climate-heat-color, #ff8100); }
+  button.link.timeline { display: block; width: 100%; margin-top: 4px; }
+  .timeline svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .timeline text { font-size: 9px; fill: var(--secondary-text-color); }
+  .tl-price { fill: color-mix(in srgb, var(--warning-color, #ffa600) 35%, transparent); }
+  .tl-price.on { fill: color-mix(in srgb, var(--state-climate-heat-color, #ff8100) 55%, transparent); }
+  .tl-low { fill: var(--info-color, #039be5); }
   .grid.smart { grid-template-columns: minmax(64px, auto) minmax(64px, auto) 1fr; }
   .value.plan { display: flex; flex-direction: column; font-size: 14px; }
   .reason { font-size: 14px; color: var(--primary-text-color); }
@@ -270,6 +277,10 @@ class PriceHeaterBaseCard extends HTMLElement {
 class PriceHeaterCard extends PriceHeaterBaseCard {
   static cardType = "price-heater-card";
 
+  static extraSchema() {
+    return [{ name: "show_plan", selector: { boolean: {} } }];
+  }
+
   getCardSize() {
     return 5;
   }
@@ -317,7 +328,34 @@ class PriceHeaterCard extends PriceHeaterBaseCard {
         ${m.floor !== null ? this.stat("floor", this.t("label.floor"), deg(m.floor)) : ""}
         ${m.outdoor !== null ? this.stat(this._ids.outdoor ? "outdoor" : "weather", this.t("label.outdoor"), deg(m.outdoor)) : ""}
         ${this.stat("status", this.t("label.plan"), plan, "plan")}
-      </div>`;
+      </div>
+      ${this._config.show_plan !== false ? this.renderTimeline(m, now) : ""}`;
+  }
+
+  renderTimeline(m, now) {
+    const tl = planTimeline({ plan: m.planSteps, now, min: m.min, max: m.max });
+    if (!tl) return "";
+    const a = tl.area;
+    const clock = (t) => formatClock(t, this.loc);
+    const parts = [];
+    for (const b of tl.bars) parts.push(`<rect class="tl-price ${b.on ? "on" : ""}" x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}"/>`);
+    if (tl.minY !== null) parts.push(`<line class="temp-limit" x1="${a.x0}" x2="${a.x1}" y1="${tl.minY}" y2="${tl.minY}"/><text x="${a.x1 + 4}" y="${tl.minY + 3}">${esc(this.n(m.min, 1))}°</text>`);
+    if (tl.maxY !== null) parts.push(`<line class="temp-limit" x1="${a.x0}" x2="${a.x1}" y1="${tl.maxY}" y2="${tl.maxY}"/><text x="${a.x1 + 4}" y="${tl.maxY + 3}">${esc(this.n(m.max, 1))}°</text>`);
+    if (tl.floorPath) parts.push(`<path class="floor pred" d="${tl.floorPath}"><title>${esc(this.t("label.floor"))} · ${esc(this.t("label.forecast"))}</title></path>`);
+    if (tl.tempPath) parts.push(`<path class="temp pred" d="${tl.tempPath}"><title>${esc(this.t("label.temperature"))} · ${esc(this.t("label.forecast"))}</title></path>`);
+    if (tl.lowest) parts.push(`<circle class="tl-low" cx="${tl.lowest.x}" cy="${tl.lowest.y}" r="2.5"><title>${esc(this.n(tl.lowest.value, 1))}°</title></circle>`);
+    parts.push(`<rect class="strip-bg" x="${a.x0}" y="${tl.stripY}" width="${a.x1 - a.x0}" height="6" rx="2"/>`);
+    for (const h of tl.heat) {
+      parts.push(`<rect class="strip-plan" x="${h.x}" y="${tl.stripY}" width="${h.w}" height="6" rx="2"><title>${esc(this.t("label.planned"))} ${esc(clock(h.start))}–${esc(clock(h.end))}</title></rect>`);
+    }
+    parts.push(`<text x="${a.x0}" y="${tl.height - 2}">${esc(this.t("label.now"))}</text>`);
+    for (const tick of tl.ticks) {
+      if (tick.x - a.x0 < 24) continue;
+      parts.push(`<line class="grid-line" x1="${tick.x}" x2="${tick.x}" y1="${a.y0}" y2="${tl.stripY + 6}"/><text x="${tick.x}" y="${tl.height - 2}" text-anchor="middle">${esc(clock(tick.time))}</text>`);
+    }
+    return `<button class="link timeline" data-more="status">
+      <svg viewBox="0 0 ${tl.width} ${tl.height}" role="img" aria-label="${esc(this.t("label.plan_aria", { hours: tl.hours }))}">${parts.join("")}</svg>
+    </button>`;
   }
 
   renderConsumption(m) {

@@ -36,6 +36,8 @@ const en = {
   "label.plan_hours": "Next {span} h: {hours} h heat",
   "label.planned": "Planned heating",
   "label.forecast": "Forecast",
+  "label.plan_aria": "Smart plan for the next {hours} hours",
+  "editor.show_plan": "Show the smart plan",
   "smart.learning": "Smart is learning how your house heats and cools (needs about two days of history) – simple rules until then.",
   "smart.needs_variation": "Smart needs history with the heater both on and off to learn – simple rules until then.",
   "smart.no_fit": "Smart could not make sense of the history yet – simple rules for now. It tries again every 6 hours.",
@@ -111,6 +113,8 @@ const sv = {
   "label.plan_hours": "Närmaste {span} h: {hours} h värme",
   "label.planned": "Planerad värme",
   "label.forecast": "Prognos",
+  "label.plan_aria": "Smart plan för de närmaste {hours} timmarna",
+  "editor.show_plan": "Visa smart plan",
   "smart.learning": "Smart lär sig hur huset värms och kyls (behöver ungefär två dygns historik) – enkla regler tills dess.",
   "smart.needs_variation": "Smart behöver historik där värmen både varit på och av – enkla regler tills dess.",
   "smart.no_fit": "Smart kunde inte tolka historiken än – enkla regler så länge. Den försöker igen var 6:e timme.",
@@ -359,6 +363,7 @@ export function statusModel(hass, ids) {
     floor: toNumber(a.floor_temperature),
     outdoor: toNumber(a.outdoor_temperature),
     planOn: steps.length ? steps[0].on === true : null,
+    planSteps: steps,
     planNext: plan?.next_change ? Date.parse(plan.next_change) : null,
     planHours: toNumber(plan?.heat_hours),
     planCost: toNumber(plan?.cost),
@@ -414,6 +419,71 @@ export function onSpans(rows, entityId, start, end) {
   }
   if (open !== null && end > open) spans.push({ start: open, end });
   return spans.filter((s) => s.end > s.start);
+}
+
+/**
+ * A compact timeline of the smart plan from now: price bars, planned heating
+ * and the forecast room (and floor) temperature against the min/max band.
+ */
+export function planTimeline({ plan, now, min = null, max = null, hours = 24, width = 320, height = 76 }) {
+  const steps = (plan || [])
+    .map((p) => ({ start: Date.parse(p.start), on: p.on === true, price: toNumber(p.price), temp: toNumber(p.temperature), floor: toNumber(p.floor) }))
+    .filter((p) => Number.isFinite(p.start) && p.start + PLAN_STEP_MS > now)
+    .sort((a, b) => a.start - b.start);
+  if (!steps.length) return null;
+  const start = now;
+  const end = Math.min(now + hours * 3600000, steps[steps.length - 1].start + PLAN_STEP_MS);
+  if (end <= start) return null;
+  const inView = steps.filter((p) => p.start < end);
+  const area = { x0: 2, x1: width - 30, y0: 6, y1: height - 26 };
+  const x = (t) => r1(area.x0 + ((Math.min(end, Math.max(start, t)) - start) / (end - start)) * (area.x1 - area.x0));
+
+  const prices = inView.map((p) => p.price).filter((v) => v !== null);
+  const pHi = Math.max(...prices, 0) || 1;
+  const pLo = Math.min(...prices, 0);
+  const bars = inView
+    .filter((p) => p.price !== null)
+    .map((p) => {
+      const h = r1(((p.price - pLo) / (pHi - pLo || 1)) * (area.y1 - area.y0) * 0.9);
+      return { x: x(p.start), w: Math.max(0.5, r1(x(p.start + PLAN_STEP_MS) - x(p.start) - 0.3)), y: r1(area.y1 - h), h, on: p.on };
+    });
+
+  const heat = mergeSpans(inView.filter((p) => p.on).map((p) => ({ start: Math.max(start, p.start), end: Math.min(end, p.start + PLAN_STEP_MS) }))).map(
+    (s) => ({ x: x(s.start), w: Math.max(1, r1(x(s.end) - x(s.start))), start: s.start, end: s.end }),
+  );
+
+  const temps = inView.filter((p) => p.temp !== null);
+  const floors = inView.filter((p) => p.floor !== null);
+  const values = [...temps.map((p) => p.temp), ...floors.map((p) => p.floor), ...(min !== null ? [min] : []), ...(max !== null ? [max] : [])];
+  let tempPath = "";
+  let floorPath = "";
+  let minY = null;
+  let maxY = null;
+  let lowest = null;
+  if (values.length) {
+    const tLo = Math.floor(Math.min(...values) - 0.5);
+    const tHi = Math.ceil(Math.max(...values) + 0.5);
+    const yT = (v) => r1(area.y1 - ((v - tLo) / (tHi - tLo)) * (area.y1 - area.y0));
+    const line = (points, key) => points.map((p, i) => `${i ? "L" : "M"}${x(Math.max(start, p.start))} ${yT(p[key])}`).join(" ");
+    tempPath = temps.length > 1 ? line(temps, "temp") : "";
+    floorPath = floors.length > 1 ? line(floors, "floor") : "";
+    minY = min !== null ? yT(min) : null;
+    maxY = max !== null ? yT(max) : null;
+    if (temps.length) {
+      const low = temps.reduce((a, b) => (b.temp < a.temp ? b : a));
+      lowest = { x: x(Math.max(start, low.start)), y: yT(low.temp), value: low.temp };
+    }
+  }
+
+  // Ticks at local clock hours divisible by 6.
+  const ticks = [];
+  const first = new Date(start);
+  first.setMinutes(0, 0, 0);
+  for (let t = first.getTime() + 3600000; t <= end; t += 3600000) {
+    if (new Date(t).getHours() % 6 === 0) ticks.push({ x: x(t), time: t });
+  }
+
+  return { width, height, area, bars, heat, tempPath, floorPath, minY, maxY, lowest, ticks, stripY: height - 20, hours: Math.round((end - start) / 3600000) };
 }
 
 /** Join touching or overlapping spans. */

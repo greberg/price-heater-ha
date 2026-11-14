@@ -120,13 +120,22 @@ test("problems are shown instead of the card", () => {
 test("status card shows the smart plan, floor and outdoor", () => {
   const card = document.createElement("price-heater-card");
   card.setConfig({});
-  card.hass = makeHass({ now: new Date(2026, 10, 14, 10, 0).getTime(), reason: "planned_off", heater: "off", smart: "ready" }).hass;
+  card.hass = makeHass({ reason: "planned_off", heater: "off", smart: "ready" }).hass;
   const html = card.shadowRoot.innerHTML;
   assert.match(html, /Off – stored heat lasts/);
   assert.match(html, /Floor/);
   assert.match(html, /24\.6/);
   assert.match(html, /-3\.5|−3\.5/);
   assert.match(html, /Next heating \d\d:\d\d/);
+  // the plan timeline: next 24 h with planned heating and the forecast
+  assert.match(html, /Smart plan for the next 2[34] hours/);
+  assert.match(html, /class="link timeline"/);
+  assert.match(html, /class="strip-plan"/);
+  assert.match(html, /class="temp pred"/);
+  const hidden = document.createElement("price-heater-card");
+  hidden.setConfig({ show_plan: false });
+  hidden.hass = makeHass({ reason: "planned_off", heater: "off", smart: "ready" }).hass;
+  assert.doesNotMatch(hidden.shadowRoot.innerHTML, /class="link timeline"/);
   assert.match(html, /Next \d+ h: \d+(\.\d)? h heat · 3\.07 SEK/);
 });
 
@@ -138,7 +147,7 @@ test("status card says smart is still learning", () => {
 });
 
 test("chart card draws the plan, forecast and floor into tomorrow", async () => {
-  const now = new Date(2026, 10, 14, 10, 0).getTime();
+  const now = Date.now();
   const card = document.createElement("price-heater-chart-card");
   card.setConfig({});
   card.hass = makeHass({ now, smart: "ready" }).hass;

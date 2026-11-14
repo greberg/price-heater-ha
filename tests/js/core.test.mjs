@@ -142,3 +142,23 @@ test("power area in the chart", () => {
   assert.equal(without.powerPath, "");
   assert.ok(without.plot.y1 > chart.plot.y1);
 });
+
+test("plan timeline covers the next 24 hours from now", () => {
+  const now = Date.UTC(2026, 10, 14, 10, 7);
+  const first = Date.UTC(2026, 10, 14, 10, 0);
+  const plan = Array.from({ length: 30 * 4 }, (_, k) => ({
+    start: new Date(first + k * 900000).toISOString(),
+    on: k >= 60 && k < 72,
+    price: k >= 60 && k < 72 ? 0.3 : 2,
+    temperature: 21 - k * 0.01,
+    floor: 25,
+  }));
+  const tl = core.planTimeline({ plan, now, min: 20, max: 23 });
+  assert.equal(tl.hours, 24);
+  assert.equal(tl.heat.length, 1);
+  assert.ok(Math.abs(tl.heat[0].start - (first + 60 * 900000)) < 1);
+  assert.ok(tl.bars.length >= 96 && tl.bars.length <= 97);
+  assert.ok(tl.tempPath.startsWith("M"));
+  assert.ok(tl.lowest.value < 21);
+  assert.equal(core.planTimeline({ plan: [], now }), null);
+});

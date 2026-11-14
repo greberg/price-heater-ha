@@ -114,8 +114,11 @@ Options common to both cards:
 
 **Price Heater** — the room temperature (big), a gauge with the min–max band, the heater (tap for its history) and in words why it is on or off. Below: the price now (green when cheap, orange when expensive), its rank today, the cheap-price limit and your threshold. With a power source it also shows the power now, the energy used today and what it cost (≈ marks power estimated from the rated power). An **Automation / Manual** chip in the header turns the automation on or off. Alerts show only when something needs attention: automation off, waiting for the minimum cycle time, or a sensor or the heater unavailable.
 
+With the **smart** strategy it also shows the floor and outdoor temperature, the next planned switch ("Next heating 02:00", "Heating until 05:30") with the plan's heating hours and cost, and a **timeline of the next 24 hours**: price bars (orange where heating is planned), the planned heating as a dashed strip, and the forecast room and floor temperature against your min and max. Tap it for the status details.
+
 ```yaml
 type: custom:price-heater-card
+show_plan: true         # the smart plan timeline (default true)
 ```
 
 **Price Heater chart** — today's prices as bars, green for the hours that count as cheap, with the current hour highlighted, the cheap-price limit (dashed green) and your threshold (dotted). A strip below shows when the heater actually ran today, and a blue line the room temperature against your min and max. With a power source, an orange area under the prices shows the power the heater drew through the day (peak on the right), and a line below sums up today's energy and cost. Hover a bar for its time and price.
