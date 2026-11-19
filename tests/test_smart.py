@@ -136,6 +136,42 @@ def test_one_node_fit_without_floor_sensor():
     assert abs(fitted.heat - 0.8) < 0.15
 
 
+def test_fit_drops_the_constant_when_it_hides_the_outdoor_loss():
+    # The outdoor sensor's daily swing runs the wrong way (say it sits in the sun
+    # on a cold wall): with a constant term the outdoor loss comes out negative.
+    history = _simulated_history(HOUSE)
+    misleading = [
+        smart.Sample(s.time, s.air, s.slab, 4 - s.outdoor, s.sun, s.on) for s in history
+    ]
+    report = {}
+    fitted, status = smart.fit_model(misleading, two_node=True, report=report)
+    assert status == smart.STATUS_READY and fitted.two_node
+    assert fitted.air_out > 0 and fitted.air_base == 0.0
+    assert report["air_with_constant"][1] <= 0
+    assert report["air_without_constant"][1] > 0
+
+
+def test_fit_falls_back_to_one_node_when_the_floor_makes_no_sense():
+    history = _simulated_history(HOUSE)
+    stuck_floor = [smart.Sample(s.time, s.air, 23.0, s.outdoor, s.sun, s.on) for s in history]
+    report = {}
+    fitted, status = smart.fit_model(stuck_floor, two_node=True, report=report)
+    assert status == smart.STATUS_READY and not fitted.two_node
+    assert fitted.heat > 0 and fitted.air_out > 0
+    assert report["slab"] is None or min(report["slab"]) <= 0
+
+
+def test_fit_reports_why_it_failed():
+    history = _simulated_history(HOUSE)
+    # The room gets colder whenever the heater is on: the heater entity is wrong.
+    backwards = [smart.Sample(s.time, s.air, None, s.outdoor, s.sun, 1.0 - s.on) for s in history]
+    backwards = [smart.Sample(s.time, 40 - s.air, None, s.outdoor, s.sun, s.on) for s in backwards]
+    report = {}
+    fitted, status = smart.fit_model(backwards, two_node=False, report=report)
+    assert (fitted, status) == (None, smart.STATUS_NO_FIT)
+    assert report["failed"] == "one_node" and report["hours"] >= smart.MIN_HOURS
+
+
 def test_least_squares_drops_negative_coefficients():
     rows = [[1.0, x, 1.0] for x in range(10)]
     ys = [5.0 - 0.0 * x for x in range(10)]

@@ -59,6 +59,7 @@ class SmartPlanner:
         self.sun_scale: Optional[float] = None
         self.full_power_w: Optional[float] = None
         self.fitted_at: Optional[datetime] = None
+        self.fit_report: dict = {}
         self.forecast_at: Optional[datetime] = None
         self.outdoor: Optional[float] = None
         self.floor: Optional[float] = None
@@ -107,9 +108,12 @@ class SmartPlanner:
             _LOGGER.warning("%s: could not read history to learn the house: %s", self.name, err)
             self.model_status = STATUS_NO_HISTORY
             return
-        model, status, scale, full = await self.hass.async_add_executor_job(
+        model, status, scale, full, report = await self.hass.async_add_executor_job(
             self._fit, states, start, end
         )
+        self.fit_report = report
+        if status == smart.STATUS_NO_FIT:
+            _LOGGER.warning("%s: could not fit a model of the house: %s", self.name, report)
         if model is not None or self.model is None:
             self.model, self.model_status = model, status
         self.sun_scale = scale or self.sun_scale
@@ -158,8 +162,11 @@ class SmartPlanner:
 
         sun_raw = smart.resample(numeric(self.solar_sensor), grid) if self.solar_sensor else None
         samples, scale = smart.build_samples(grid, air, slab, outdoor, on, sun_raw, lat, lon)
-        model, status = smart.fit_model(samples, two_node=bool(self.floor_sensor))
-        return model, status, scale, full
+        report: dict = {}
+        model, status = smart.fit_model(samples, two_node=bool(self.floor_sensor), report=report)
+        if model is not None and self.floor_sensor and not model.two_node:
+            report["note"] = "floor history did not fit; heating modelled straight into the air"
+        return model, status, scale, full, report
 
     # ------------------------------------------------------------------ forecast
     async def async_update_forecast(self) -> None:
@@ -231,6 +238,7 @@ class SmartPlanner:
             "status": self.status,
             "model": self.model.as_dict() if self.model else None,
             "learned_at": self.fitted_at.isoformat() if self.fitted_at else None,
+            "fit": self.fit_report or None,
             "forecast_at": self.forecast_at.isoformat() if self.forecast_at else None,
             "plan": self.plan.summary(power / 1000 if power else None) if self.plan else None,
         }

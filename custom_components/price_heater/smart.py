@@ -53,6 +53,7 @@ STEPS_PER_HOUR = 4
 PLAN_HOURS = 24  # plan at least this far; unknown prices repeat the day before
 MIN_HOURS = 36  # usable hours of history before the model is trusted
 MIN_SWITCH_HOURS = 2  # the history must have this much both on and off time
+MIN_HEAT = 0.05  # °C per hour: heating that moves the temperature less than this is noise
 HISTORY_DAYS = 10
 
 STATUS_READY = "ready"
@@ -355,8 +356,14 @@ def least_squares(rows: Sequence[Sequence[float]], ys: Sequence[float], positive
     return None
 
 
-def fit_model(samples: Sequence[Sample], two_node: bool) -> Tuple[Optional[ThermalModel], str]:
-    """Fit the model on 1-hour windows of 15-minute samples."""
+def fit_model(
+    samples: Sequence[Sample], two_node: bool, report: Optional[dict] = None
+) -> Tuple[Optional[ThermalModel], str]:
+    """Fit the model on 1-hour windows of 15-minute samples.
+
+    ``report``, if given, is filled with the coefficients each attempt found,
+    to explain a fit that failed.
+    """
     windows = []
     span = STEPS_PER_HOUR
     for k in range(len(samples) - span):
@@ -380,18 +387,32 @@ def fit_model(samples: Sequence[Sample], two_node: bool) -> Tuple[Optional[Therm
             }
         )
     hours = len(windows) / span
+    if report is not None:
+        report["hours"] = round(hours, 1)
     if hours < MIN_HOURS:
         return None, STATUS_LEARNING
     on_hours = sum(w["u"] for w in windows) / span
+    if report is not None:
+        report["heating_hours"] = round(on_hours, 1)
     if on_hours < MIN_SWITCH_HOURS or hours - on_hours < MIN_SWITCH_HOURS:
         return None, STATUS_NEEDS_VARIATION
 
+    def air_fit(first: str):
+        """Air equation; drops the constant if it hides the outdoor loss."""
+        for constant in (True, False):
+            rows = [[w[first], w["out"], w["sun"]] + ([1.0] if constant else []) for w in windows]
+            coef = least_squares(rows, [w["d_air"] for w in windows], positive=(0, 1, 2))
+            if coef and not constant:
+                coef.append(0.0)
+            if report is not None:
+                report["air_" + ("with_constant" if constant else "without_constant")] = _rounded(coef)
+            if coef and coef[0] > (MIN_HEAT if first == "u" else 0) and coef[1] > 0:
+                return coef
+        return None
+
+    model = None
     if two_node:
-        air = least_squares(
-            [[w["slab"], w["out"], w["sun"], 1.0] for w in windows],
-            [w["d_air"] for w in windows],
-            positive=(0, 1, 2),
-        )
+        air = air_fit("slab")
         # No constant term: with the slab-air gap fairly steady it can't be
         # told apart from the coupling, so all slab losses go via the air.
         slab = least_squares(
@@ -399,20 +420,21 @@ def fit_model(samples: Sequence[Sample], two_node: bool) -> Tuple[Optional[Therm
             [w["d_slab"] for w in windows],
             positive=(0, 1),
         )
-        if not air or not slab or min(air[0], air[1], slab[0], slab[1]) <= 0:
-            return None, STATUS_NO_FIT
-        model = ThermalModel(
-            heat=slab[0], air_out=air[1], air_sun=air[2], air_base=air[3],
-            air_slab=air[0], slab_air=slab[1], two_node=True,
-        )
-        predicted = [air[0] * w["slab"] + air[1] * w["out"] + air[2] * w["sun"] + air[3] for w in windows]
-    else:
-        air = least_squares(
-            [[w["u"], w["out"], w["sun"], 1.0] for w in windows],
-            [w["d_air"] for w in windows],
-            positive=(0, 1, 2),
-        )
-        if not air or min(air[0], air[1]) <= 0:
+        if report is not None:
+            report["slab"] = _rounded(slab)
+        if air and slab and slab[0] > MIN_HEAT and slab[1] > 0:
+            model = ThermalModel(
+                heat=slab[0], air_out=air[1], air_sun=air[2], air_base=air[3],
+                air_slab=air[0], slab_air=slab[1], two_node=True,
+            )
+            predicted = [air[0] * w["slab"] + air[1] * w["out"] + air[2] * w["sun"] + air[3] for w in windows]
+    if model is None:
+        # Without a floor sensor, or when the floor history doesn't make sense:
+        # heating straight into the air, which still plans ahead of prices and sun.
+        air = air_fit("u")
+        if not air:
+            if report is not None:
+                report["failed"] = "two_node" if two_node else "one_node"
             return None, STATUS_NO_FIT
         model = ThermalModel(heat=air[0], air_out=air[1], air_sun=air[2], air_base=air[3])
         predicted = [air[0] * w["u"] + air[1] * w["out"] + air[2] * w["sun"] + air[3] for w in windows]
@@ -420,6 +442,10 @@ def fit_model(samples: Sequence[Sample], two_node: bool) -> Tuple[Optional[Therm
     model.hours = hours
     model.rmse = math.sqrt(sum((p - w["d_air"]) ** 2 for p, w in zip(predicted, windows)) / len(windows))
     return model, STATUS_READY
+
+
+def _rounded(coef: Optional[Sequence[float]]) -> Optional[List[float]]:
+    return [round(c, 4) for c in coef] if coef else None
 
 
 # --------------------------------------------------------------------------

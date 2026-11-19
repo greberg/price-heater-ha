@@ -45,7 +45,7 @@ floor heating ──► concrete slab ──► room air ──► outdoors
                                       sun
 ```
 
-how fast the heating warms the slab, how fast the slab warms the air, how fast the air loses heat outdoors, and how much the sun adds (to the air only – which is why a sunny lunch warms the room but not the concrete). Both temperatures are measured, so this is a plain regression that refreshes every 6 hours. It needs about **two days** of history with the heater both on and off; until then the simple rules apply and the card says it is learning. Without a floor sensor it uses a single air store.
+how fast the heating warms the slab, how fast the slab warms the air, how fast the air loses heat outdoors, and how much the sun adds (to the air only – which is why a sunny lunch warms the room but not the concrete). Both temperatures are measured, so this is a plain regression that refreshes every 6 hours. It needs about **two days** of history with the heater both on and off; until then the simple rules apply and the card says it is learning. Without a floor sensor it uses a single air store. If the history doesn't fit the two stores (for example a floor sensor that isn't really in the floor, or an outdoor sensor in the sun), it tries simpler versions — without the constant heat term, then a single air store — before giving up and keeping the simple rules.
 
 **How it plans.** Every 15 minutes, for the next 24 hours or more (all known prices; unpublished ones are assumed to repeat the day before), it combines:
 
@@ -60,7 +60,7 @@ The hard limits always win over the plan: below the minimum it heats, at the max
 **Tips:**
 
 - Set the floor thermostat's own setpoint high (or to its max) so Price Heater, not the thermostat, decides when it heats; keep its floor limit as a safety net.
-- The status sensor's `smart` attribute shows the learned model (`heat`, `slab_air`, `air_slab`, `air_out`, `air_sun` in °C per hour, and `rmse`, the typical 1-hour prediction error) and a plan summary; `plan` has every 15-minute step with the predicted temperatures.
+- The status sensor's `smart` attribute shows the learned model (`heat`, `slab_air`, `air_slab`, `air_out`, `air_sun` in °C per hour, and `rmse`, the typical 1-hour prediction error) and a plan summary; `fit` shows what each fitting attempt found (useful when the card says Smart could not make sense of the history); `plan` has every 15-minute step with the predicted temperatures.
 - The chart card shows the plan: planned heating as a dashed strip, forecast room and floor temperature as dashed lines, and tomorrow's prices once published.
 
 ## Supported devices
