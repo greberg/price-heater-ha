@@ -22,7 +22,8 @@
           "outdoor_sensor": "Utetemperaturgivare (smart)",
           "floor_sensor": "Golv-/betongtemperaturgivare (smart)",
           "solar_sensor": "Solgivare: lux, W/m² eller solelsproduktion (smart)",
-          "max_floor_temp": "Högsta golvtemperatur (smart)"
+          "max_floor_temp": "Högsta golvtemperatur (smart)",
+          "allowed_dip": "Tillåten dipp under min (smart)"
         },
         "data_description": {
           "price_sensor": "Tillståndet ska vara aktuellt pris. För 'billigaste timmar' behövs även dagens prislista som attribut (raw_today, today eller prices_today), som Nordpool (HACS), Energi Data Service och ENTSO-e har.",
@@ -38,7 +39,8 @@
           "outdoor_sensor": "Temperaturen ute just nu; justerar prognosen för din plats.",
           "floor_sensor": "Med golvvärme: en givare i eller på plattan. Låter den smarta planen lagra värme i betongen.",
           "solar_sensor": "Hur starkt solen lyser på huset. Lär sig hur mycket solen värmer; utan den används solens bana och prognosens moln.",
-          "max_floor_temp": "Värmen är aldrig på över denna golvtemperatur (trägolv: cirka 27 °C)."
+          "max_floor_temp": "Värmen är aldrig på över denna golvtemperatur (trägolv: cirka 27 °C).",
+          "allowed_dip": "När det skulle kräva värme till ett pris över medianen att hålla minimum får rummet sjunka så här mycket under, tills en billigare timme. Under det värmer den alltid. 0 = aldrig under minimum."
         }
       }
     },
@@ -72,7 +74,8 @@
           "outdoor_sensor": "Utetemperaturgivare (smart)",
           "floor_sensor": "Golv-/betongtemperaturgivare (smart)",
           "solar_sensor": "Solgivare: lux, W/m² eller solelsproduktion (smart)",
-          "max_floor_temp": "Högsta golvtemperatur (smart)"
+          "max_floor_temp": "Högsta golvtemperatur (smart)",
+          "allowed_dip": "Tillåten dipp under min (smart)"
         },
         "data_description": {
           "power_sensor": "En mätare på elementet, t.ex. en smart plugg. Ger exakt effekt, energi och kostnad.",
@@ -82,7 +85,8 @@
           "outdoor_sensor": "Temperaturen ute just nu; justerar prognosen för din plats.",
           "floor_sensor": "Med golvvärme: en givare i eller på plattan. Låter den smarta planen lagra värme i betongen.",
           "solar_sensor": "Hur starkt solen lyser på huset. Lär sig hur mycket solen värmer; utan den används solens bana och prognosens moln.",
-          "max_floor_temp": "Värmen är aldrig på över denna golvtemperatur (trägolv: cirka 27 °C)."
+          "max_floor_temp": "Värmen är aldrig på över denna golvtemperatur (trägolv: cirka 27 °C).",
+          "allowed_dip": "När det skulle kräva värme till ett pris över medianen att hålla minimum får rummet sjunka så här mycket under, tills en billigare timme. Under det värmer den alltid. 0 = aldrig under minimum."
         }
       }
     },
@@ -124,7 +128,8 @@
           "price_unavailable": "Pris saknas",
           "planned_heat": "Planerad värme",
           "planned_off": "Av - enligt plan",
-          "floor_max": "Golvet vid max - av"
+          "floor_max": "Golvet vid max - av",
+          "allowed_dip": "Av - tillåten dipp"
         }
       },
       "power": {

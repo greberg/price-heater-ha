@@ -30,6 +30,8 @@ from .const import (
     CONF_TEMP_SENSOR,
     CONF_FLOOR_SENSOR,
     CONF_MAX_FLOOR_TEMP,
+    CONF_ALLOWED_DIP,
+    DEFAULT_ALLOWED_DIP,
     CONF_OUTDOOR_SENSOR,
     CONF_SOLAR_SENSOR,
     CONF_STRATEGY,
@@ -123,6 +125,7 @@ def _schema() -> dict:
             )
         ),
         vol.Optional(CONF_MAX_FLOOR_TEMP, default=DEFAULT_MAX_FLOOR_TEMP): _temp_selector(15, 40, 0.5),
+        vol.Optional(CONF_ALLOWED_DIP, default=DEFAULT_ALLOWED_DIP): _temp_selector(0, 3, 0.1),
     }
 
 

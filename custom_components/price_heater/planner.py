@@ -40,6 +40,7 @@ class SmartPlanner:
         solar_sensor: Optional[str],
         power_sensor: Optional[str],
         floor_max: Optional[float],
+        allowed_dip: float = 0.0,
     ) -> None:
         self.hass = hass
         self.name = name
@@ -51,6 +52,8 @@ class SmartPlanner:
         self.solar_sensor = solar_sensor
         self.power_sensor = power_sensor
         self.floor_max = floor_max if floor_sensor else None
+        self.allowed_dip = max(0.0, allowed_dip)
+        self.check = smart.ForecastCheck()
 
         self.model: Optional[smart.ThermalModel] = None
         self.model_status = smart.STATUS_LEARNING
@@ -211,11 +214,17 @@ class SmartPlanner:
     ) -> None:
         """Plan again when a new 15-minute step starts or anything it used changed."""
         self.read_sensors()
+        self.check.observe(now, air, self.sun)
         if self.model is None:
             self.plan = None
             return
         slots = smart.price_slots(price_attributes, now)
-        key = (smart.step_start(now), len(slots), slots[-1] if slots else None, min_temp, max_temp)
+        margin = self.check.margin(PLAN_MARGIN)
+        trust = self.check.sun_trust()
+        key = (
+            smart.step_start(now), len(slots), slots[-1] if slots else None,
+            min_temp, max_temp, round(margin, 2), round(trust, 2),
+        )
         if self.plan is not None and key == self._plan_key:
             return
         self._plan_key = key
@@ -223,14 +232,17 @@ class SmartPlanner:
         inputs = smart.build_inputs(
             now, slots, self.weather_points, self.outdoor,
             self.hass.config.latitude, self.hass.config.longitude, self.sun,
+            sun_trust=trust,
         )
         if inputs is None or air is None or (two and self.floor is None):
             self.plan = None
             return
+        low = min_temp + margin
         self.plan = smart.make_plan(
             self.model, inputs, air, self.floor if two else None,
-            min_temp + PLAN_MARGIN, max_temp, self.floor_max,
+            low, max_temp, self.floor_max, hard_low=low - self.allowed_dip,
         )
+        self.check.record(self.plan, inputs)
 
     def attributes(self, rated_power_w: Optional[float]) -> dict[str, Any]:
         power = rated_power_w or self.full_power_w
@@ -239,6 +251,8 @@ class SmartPlanner:
             "model": self.model.as_dict() if self.model else None,
             "learned_at": self.fitted_at.isoformat() if self.fitted_at else None,
             "fit": self.fit_report or None,
+            "allowed_dip": self.allowed_dip,
+            "forecast_check": self.check.as_dict(PLAN_MARGIN),
             "forecast_at": self.forecast_at.isoformat() if self.forecast_at else None,
             "plan": self.plan.summary(power / 1000 if power else None) if self.plan else None,
         }

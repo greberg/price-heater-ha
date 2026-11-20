@@ -22,7 +22,8 @@
           "outdoor_sensor": "Outdoor temperature sensor (smart)",
           "floor_sensor": "Floor / concrete temperature sensor (smart)",
           "solar_sensor": "Sun sensor: lux, W/m² or solar production (smart)",
-          "max_floor_temp": "Maximum floor temperature (smart)"
+          "max_floor_temp": "Maximum floor temperature (smart)",
+          "allowed_dip": "Allowed dip below minimum (smart)"
         },
         "data_description": {
           "price_sensor": "Its state should be the current price. To use 'cheapest hours' it also needs today's price list as an attribute (raw_today, today or prices_today), as Nordpool (HACS), Energi Data Service and ENTSO-e provide.",
@@ -38,7 +39,8 @@
           "outdoor_sensor": "The temperature outside now; corrects the forecast for your spot.",
           "floor_sensor": "With floor heating: a probe in or on the slab. Lets the smart plan store heat in the concrete.",
           "solar_sensor": "How strong the sun is on the house. Learns how much the sun heats; without it the sun's path and the forecast clouds are used.",
-          "max_floor_temp": "The heater is never on above this floor temperature (wooden floors: about 27 °C)."
+          "max_floor_temp": "The heater is never on above this floor temperature (wooden floors: about 27 °C).",
+          "allowed_dip": "When holding the minimum would mean heating at an above-median price, the room may dip this far below it until a cheaper hour. Below that it always heats. 0 = never below the minimum."
         }
       }
     },
@@ -72,7 +74,8 @@
           "outdoor_sensor": "Outdoor temperature sensor (smart)",
           "floor_sensor": "Floor / concrete temperature sensor (smart)",
           "solar_sensor": "Sun sensor: lux, W/m² or solar production (smart)",
-          "max_floor_temp": "Maximum floor temperature (smart)"
+          "max_floor_temp": "Maximum floor temperature (smart)",
+          "allowed_dip": "Allowed dip below minimum (smart)"
         },
         "data_description": {
           "power_sensor": "A meter measuring the heater, e.g. a smart plug. Gives exact power, energy and cost.",
@@ -82,7 +85,8 @@
           "outdoor_sensor": "The temperature outside now; corrects the forecast for your spot.",
           "floor_sensor": "With floor heating: a probe in or on the slab. Lets the smart plan store heat in the concrete.",
           "solar_sensor": "How strong the sun is on the house. Learns how much the sun heats; without it the sun's path and the forecast clouds are used.",
-          "max_floor_temp": "The heater is never on above this floor temperature (wooden floors: about 27 °C)."
+          "max_floor_temp": "The heater is never on above this floor temperature (wooden floors: about 27 °C).",
+          "allowed_dip": "When holding the minimum would mean heating at an above-median price, the room may dip this far below it until a cheaper hour. Below that it always heats. 0 = never below the minimum."
         }
       }
     },
@@ -124,7 +128,8 @@
           "price_unavailable": "Price unavailable",
           "planned_heat": "Planned heating",
           "planned_off": "Off - planned",
-          "floor_max": "Floor at maximum - off"
+          "floor_max": "Floor at maximum - off",
+          "allowed_dip": "Off - dip allowed"
         }
       },
       "power": {

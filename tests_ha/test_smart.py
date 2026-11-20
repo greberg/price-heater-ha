@@ -130,6 +130,10 @@ async def test_learns_the_house_and_plans(hass: HomeAssistant, setup) -> None:
     assert attrs["floor_temperature"] == 23.0 and attrs["outdoor_temperature"] == 1.0
     assert attrs["smart"]["status"] == "ready"
     assert attrs["smart"]["plan"]["cost"] is not None
+    assert attrs["smart"]["allowed_dip"] == 0.5  # the default
+    check = attrs["smart"]["forecast_check"]
+    assert check["checked"] == 0 and check["margin"] == 0.2 and check["sun_trust"] == 0.5
+    assert planner.check.pending  # this plan's 3-hour prediction waits to be checked
     assert len(attrs["plan"]) >= 96
     assert attrs["entities"]["floor"] == FLOOR
     # The heater follows the plan.
@@ -142,6 +146,13 @@ async def test_floor_limit_stops_heating(hass: HomeAssistant, setup) -> None:
     await hass.async_block_till_done()
     assert hass.states.get(STATUS).state == "floor_max"
     assert hass.states.get(HEATER).state == "off"
+
+
+async def test_dip_setting_is_used(hass: HomeAssistant, setup) -> None:
+    entry, _ = setup
+    hass.config_entries.async_update_entry(entry, options={**entry.data, "allowed_dip": 1.0})
+    await hass.async_block_till_done()
+    assert entry.runtime_data.smart.allowed_dip == 1.0
 
 
 async def test_falls_back_to_simple_without_history(hass: HomeAssistant, setup) -> None:

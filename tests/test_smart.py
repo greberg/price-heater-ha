@@ -6,6 +6,8 @@ import importlib
 import math
 import sys
 import types
+
+import pytest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -255,3 +257,96 @@ def test_smart_decide_limits_win_over_plan():
     assert planned.reason in (logic.REASON_PLANNED_HEAT, logic.REASON_PLANNED_OFF)
     assert planned.turn_on == plan.on[0]
     assert smart.smart_decide(None, 21.0, 25, False, **args) is None
+
+
+# --------------------------------------------------------------------------
+# Forecast caution, allowed dip and the forecast check
+# --------------------------------------------------------------------------
+
+def test_forecast_sun_is_trusted_less_further_ahead():
+    assert smart.sun_trust_at(0, 0.5) == 1.0
+    assert 0.6 < smart.sun_trust_at(3, 0.5) < 0.7
+    assert abs(smart.sun_trust_at(24, 0.5) - 0.5) < 0.01
+    assert smart.sun_trust_at(12, 1.0) == 1.0
+
+    midsummer = datetime(2026, 6, 21, tzinfo=UTC)
+    now = midsummer + timedelta(hours=6)  # morning, clear sky all day
+    slots = [(midsummer + timedelta(hours=h), midsummer + timedelta(hours=h + 1), 1.0) for h in range(48)]
+    weather = [smart.WeatherPoint(now + timedelta(hours=h), 15.0, 0.0) for h in range(30)]
+    full = smart.build_inputs(now, slots, weather, None, *STOCKHOLM)
+    cautious = smart.build_inputs(now, slots, weather, None, *STOCKHOLM, sun_trust=0.5)
+    assert cautious.sun[0] > 0.95 * full.sun[0]
+    noon = 6 * 4
+    assert cautious.sun[noon] < 0.65 * full.sun[noon]
+    assert cautious.sun_forecast == full.sun
+
+
+# Expensive for the next 6 hours, then cheap.
+EXPENSIVE_FIRST = _hourly([3.0] * 6 + [0.3] * 18)
+
+
+def test_allowed_dip_waits_for_the_cheap_hours():
+    strict = smart.make_plan(HOUSE, _inputs(EXPENSIVE_FIRST), air=20.1, slab=20.5, low=20.0, high=23.0)
+    relaxed = smart.make_plan(
+        HOUSE, _inputs(EXPENSIVE_FIRST), air=20.1, slab=20.5, low=20.0, high=23.0, hard_low=19.5,
+    )
+    expensive = 6 * 4
+    assert sum(strict.on[:expensive]) > 0
+    assert sum(relaxed.on[:expensive]) < sum(strict.on[:expensive])
+    assert relaxed.price_hours() < strict.price_hours()
+    assert min(relaxed.air[1:]) >= 19.5 - 1e-6
+    assert relaxed.dip is not None and strict.dip is None
+    assert relaxed.summary()["dip_from"] == relaxed.dip.isoformat()
+
+
+def test_allowed_dip_still_heats_below_the_hard_limit():
+    # Very cold outside: the dip alone would go far below; it heats to keep the hard limit.
+    plan = smart.make_plan(
+        HOUSE, _inputs(EXPENSIVE_FIRST, outdoor=-25.0), air=20.1, slab=20.5, low=20.0, high=23.0, hard_low=19.5,
+    )
+    assert min(plan.air[1:]) >= 19.5 - 1e-6 or plan.shortfall is not None
+    assert sum(plan.on[: 6 * 4]) > 0
+
+
+def test_smart_decide_rides_out_the_dip():
+    off = smart.Plan(times=[start_of(14)], on=[False], price=[3.0], air=[19.8, 19.7], slab=[None, None])
+    decide = lambda air, on=False, plan=off: smart.smart_decide(plan, air, None, on, 20.0, 23.0, 0.3, None, 0.5)  # noqa: E731
+    assert decide(19.8) == smart.Decision(False, smart.REASON_ALLOWED_DIP)
+    assert decide(20.4) == smart.Decision(False, smart.REASON_PLANNED_OFF)
+    assert decide(19.4) == smart.Decision(True, smart.REASON_BELOW_MIN)
+    assert decide(19.7, on=True) == smart.Decision(True, smart.REASON_BELOW_MIN)  # hysteresis
+    # Without a plan there is no dip: the simple minimum applies.
+    assert decide(19.8, plan=None) is None or decide(19.8, plan=None).turn_on
+
+
+def test_forecast_check_learns_margin_and_sun_trust():
+    check = smart.ForecastCheck()
+    assert check.margin(0.2) == 0.2 and check.sun_trust() == smart.DEFAULT_SUN_TRUST
+    t0 = start_of(14, 8)
+    for k in range(40):
+        target = t0 + smart.STEP * k
+        check.pending[target] = (20.6, 0.5)  # predicted 20.6 °C and half sun
+        check.observe(target, 20.0, 0.2)  # it was 20.0 °C and less sun
+    assert check.margin(0.2) == pytest.approx(0.6)
+    assert check.sun_trust() == pytest.approx(0.4)
+    info = check.as_dict(0.2)
+    assert info["checked"] == 40 and info["mean_error"] == 0.6
+
+    # Accurate predictions: back to the base margin.
+    for k in range(200):
+        target = t0 + timedelta(days=1) + smart.STEP * k
+        check.pending[target] = (20.0, 0.5)
+        check.observe(target, 20.0, 0.5)
+    assert check.margin(0.2) == 0.2 and check.sun_trust() == 1.0
+
+
+def test_forecast_check_records_plans_and_skips_missed_checks():
+    check = smart.ForecastCheck()
+    inputs = _inputs(SPIKY)
+    inputs.sun_forecast = [0.0] * len(SPIKY)
+    plan = smart.make_plan(HOUSE, inputs, air=20.5, slab=23.0, low=20.0, high=23.0)
+    check.record(plan, inputs)
+    target = plan.times[smart.CHECK_LEAD_STEPS]
+    assert target in check.pending
+    check.observe(target + timedelta(hours=1), 20.0, None)  # Home Assistant was down
+    assert not check.pending and not check.errors

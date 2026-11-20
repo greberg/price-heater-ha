@@ -31,6 +31,7 @@ REASON_PRICE_UNAVAILABLE = "price_unavailable"
 REASON_PLANNED_HEAT = "planned_heat"
 REASON_PLANNED_OFF = "planned_off"
 REASON_FLOOR_MAX = "floor_max"
+REASON_ALLOWED_DIP = "allowed_dip"
 
 ALL_REASONS = [
     REASON_TEMPERATURE_UNAVAILABLE,
@@ -43,6 +44,7 @@ ALL_REASONS = [
     REASON_PLANNED_HEAT,
     REASON_PLANNED_OFF,
     REASON_FLOOR_MAX,
+    REASON_ALLOWED_DIP,
 ]
 
 # Reasons that protect comfort/safety and may bypass the minimum cycle time.

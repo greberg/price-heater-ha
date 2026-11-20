@@ -40,11 +40,13 @@ from .const import (
     CONF_TEMP_SENSOR,
     CONF_FLOOR_SENSOR,
     CONF_MAX_FLOOR_TEMP,
+    CONF_ALLOWED_DIP,
     CONF_OUTDOOR_SENSOR,
     CONF_SOLAR_SENSOR,
     CONF_STRATEGY,
     CONF_WEATHER,
     DEFAULT_MAX_FLOOR_TEMP,
+    DEFAULT_ALLOWED_DIP,
     STRATEGY_SIMPLE,
     STRATEGY_SMART,
     DEFAULT_CHEAP_HOURS,
@@ -108,6 +110,7 @@ class PriceHeaterController:
         self.smart: SmartPlanner | None = None
         if self.strategy == STRATEGY_SMART:
             floor_max = to_float(source.get(CONF_MAX_FLOOR_TEMP))
+            dip = to_float(source.get(CONF_ALLOWED_DIP))
             self.smart = SmartPlanner(
                 hass,
                 name=entry.title,
@@ -119,6 +122,7 @@ class PriceHeaterController:
                 solar_sensor=source.get(CONF_SOLAR_SENSOR) or None,
                 power_sensor=self.power_sensor,
                 floor_max=floor_max if floor_max is not None else DEFAULT_MAX_FLOOR_TEMP,
+                allowed_dip=dip if dip is not None else DEFAULT_ALLOWED_DIP,
             )
         self.min_cycle = timedelta(
             minutes=float(config.get(CONF_MIN_CYCLE, DEFAULT_MIN_CYCLE))
@@ -293,6 +297,7 @@ class PriceHeaterController:
                     self.max_temp,
                     self.hysteresis,
                     self.smart.floor_max,
+                    self.smart.allowed_dip,
                 )
             if self.decision is None:
                 self.decision = decide(

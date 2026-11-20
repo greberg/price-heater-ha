@@ -55,7 +55,13 @@ how fast the heating warms the slab, how fast the slab warms the air, how fast t
 
 and simulates the air and slab temperatures. Whenever the air would drop below the minimum (+0.2 °C margin) it adds heating at the step with the **lowest price per degree it adds at that moment**. Because the slab is slow, that is often hours earlier, at night, so the concrete carries the heat through the expensive hours. It never plans heating that would push the air over the maximum or the floor over the **maximum floor temperature** (default 28 °C; about 27 °C for wooden floors). Zero or negative prices are used to store extra heat when it fits.
 
-The hard limits always win over the plan: below the minimum it heats, at the maximum or the floor limit it stops.
+**When the forecast is wrong.** A plan is only as good as its forecast, so it is careful in three ways:
+
+- **It counts on less sun than forecast.** The sun measured now is trusted for the next hour or so; further ahead the forecast sun is counted at a share that fades to 50 %. A sunny forecast that turns grey then finds heat already stored from cheap hours, and if the sun does come, the next 15-minute replan skips heating it no longer needs.
+- **Allowed dip below minimum** (default 0.5 °C, under Configure). The plan aims for the minimum, but it won't buy heat at an above-median price just to hold it: the room may dip this far below the minimum and catch up at the next cheaper hour. Below the dip it always heats. Set 0 to never go below the minimum.
+- **Forecast check.** Every plan's prediction 3 hours ahead is compared with what actually happened (the last 48 h). If the plan is often too optimistic it aims further above the minimum (up to 1 °C), and the sun share follows how much of the forecast sun really shows up on a poor day (30–100 %). The status sensor's `smart` → `forecast_check` attribute shows the misses, the margin and the sun share. It starts over after a restart.
+
+The hard limits always win over the plan: below the minimum (minus the allowed dip) it heats, at the maximum or the floor limit it stops.
 
 **Tips:**
 

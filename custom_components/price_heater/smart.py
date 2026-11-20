@@ -28,6 +28,7 @@ heat through the expensive ones; and sunny hours need less heating.
 from __future__ import annotations
 
 import math
+from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, List, Mapping, Optional, Sequence, Tuple
@@ -35,6 +36,7 @@ from typing import Any, List, Mapping, Optional, Sequence, Tuple
 from .logic import (
     PRICE_LIST_ATTRIBUTES,
     REASON_ABOVE_MAX,
+    REASON_ALLOWED_DIP,
     REASON_BELOW_MIN,
     REASON_FLOOR_MAX,
     REASON_PLANNED_HEAT,
@@ -55,6 +57,17 @@ MIN_HOURS = 36  # usable hours of history before the model is trusted
 MIN_SWITCH_HOURS = 2  # the history must have this much both on and off time
 MIN_HEAT = 0.05  # °C per hour: heating that moves the temperature less than this is noise
 HISTORY_DAYS = 10
+
+# Forecast caution: how much of the forecast sun the plan counts on far ahead
+# (the next hour is trusted; it fades towards this share), until the forecast
+# check has learned better.
+DEFAULT_SUN_TRUST = 0.5
+MIN_SUN_TRUST = 0.3
+SUN_TRUST_HOURS = 3.0
+# The forecast check compares each plan's prediction this far ahead with what happened.
+CHECK_LEAD_STEPS = 12  # 3 h
+CHECK_HOURS = 48
+MAX_MARGIN = 1.0  # °C: the most the plan will aim above the minimum
 
 STATUS_READY = "ready"
 STATUS_LEARNING = "learning"
@@ -204,7 +217,13 @@ class Inputs:
     times: List[datetime]  # step starts, UTC
     price: List[float]
     outdoor: List[float]
-    sun: List[float]
+    sun: List[float]  # what the plan counts on
+    sun_forecast: Optional[List[float]] = None  # the forecast as is, for the forecast check
+
+
+def sun_trust_at(hours_ahead: float, trust: float) -> float:
+    """Share of the forecast sun the plan counts on: all of it now, ``trust`` far ahead."""
+    return 1 - (1 - trust) * (1 - math.exp(-hours_ahead / SUN_TRUST_HOURS))
 
 
 def build_inputs(
@@ -215,8 +234,14 @@ def build_inputs(
     latitude: float,
     longitude: float,
     sun_now: Optional[float] = None,
+    sun_trust: float = 1.0,
 ) -> Optional[Inputs]:
-    """Price, outdoor temperature and sun for every step of the plan."""
+    """Price, outdoor temperature and sun for every step of the plan.
+
+    The forecast sun is counted at ``sun_trust`` far ahead (see ``sun_trust_at``),
+    so a cloudier day than forecast doesn't leave the room short; sun measured
+    now is trusted for the next hours.
+    """
     start = step_start(now)
     known_end = max((end for _, end, _ in slots), default=start)
     end = max(known_end.astimezone(timezone.utc), start + timedelta(hours=PLAN_HOURS))
@@ -227,7 +252,7 @@ def build_inputs(
     # A measured sun level now corrects the cloud forecast for the next hours.
     seen = min(1.2, sun_now / clear_now) if sun_now is not None and clear_now > 0.1 else None
 
-    times, prices, outdoor, sun = [], [], [], []
+    times, prices, outdoor, sun, forecast_sun = [], [], [], [], []
     t = start
     while t < end:
         price = _price_at(slots, t)
@@ -244,16 +269,19 @@ def build_inputs(
             temp = outdoor_now
         else:
             temp += bias * math.exp(-hours_ahead / 6)
-        factor = cloud_factor(_interpolate(weather, t, "cloud"))
+        forecast = cloud_factor(_interpolate(weather, t, "cloud"))
+        factor = forecast * sun_trust_at(hours_ahead, sun_trust)
         if seen is not None:
             weight = math.exp(-hours_ahead / 1.5)
             factor = weight * seen + (1 - weight) * factor
+        clear = clear_sky(solar_elevation(t + STEP / 2, latitude, longitude))
         times.append(t)
         prices.append(price)
         outdoor.append(temp)
-        sun.append(clear_sky(solar_elevation(t + STEP / 2, latitude, longitude)) * factor)
+        sun.append(clear * factor)
+        forecast_sun.append(clear * forecast)
         t += STEP
-    return Inputs(times, prices, outdoor, sun)
+    return Inputs(times, prices, outdoor, sun, forecast_sun)
 
 
 # --------------------------------------------------------------------------
@@ -551,6 +579,7 @@ class Plan:
     air: List[float]  # predicted at the start of each step, plus the end
     slab: List[Optional[float]]
     shortfall: Optional[datetime] = None  # first time the minimum cannot be kept
+    dip: Optional[datetime] = None  # first time it lets the air dip rather than heat at a high price
 
     def heat_hours(self) -> float:
         return sum(self.on) * STEP_H
@@ -574,6 +603,7 @@ class Plan:
             "lowest_temperature": round(min(self.air), 2),
             "highest_temperature": round(max(self.air), 2),
             "shortfall": _iso(self.shortfall),
+            "dip_from": _iso(self.dip),
             "until": _iso(self.times[-1] + STEP),
         }
 
@@ -611,8 +641,13 @@ def make_plan(
     low: float,
     high: float,
     slab_max: Optional[float] = None,
+    hard_low: Optional[float] = None,
 ) -> Plan:
     """Cheapest on/off steps that keep the air at or above ``low``.
+
+    With ``hard_low`` below ``low``, the air may dip between the two rather
+    than be held up by heating at an above-median price; below ``hard_low`` it
+    heats at any price.
 
     The model is linear, so heating one step adds a fixed response to the
     temperatures after it. Repeatedly take the first moment the air would be
@@ -634,6 +669,10 @@ def make_plan(
     on = [False] * n
     banned = [False] * n
     given_up: set = set()
+    tolerated: set = set()
+    floor_low = low if hard_low is None else min(low, hard_low)
+    ordered = sorted(inputs.price)
+    affordable = ordered[(n - 1) // 2] if n else 0.0  # median price of the plan
 
     def fits(k: int) -> bool:
         for j in range(k + 1, n + 1):
@@ -652,9 +691,14 @@ def make_plan(
             slabs[j] += pulse_slab[j - k - 1]
 
     for _ in range(4 * n):
-        cold = next((j for j in range(1, n + 1) if airs[j] < low - 1e-6 and j not in given_up), None)
+        cold = next(
+            (j for j in range(1, n + 1)
+             if airs[j] < low - 1e-6 and j not in given_up and j not in tolerated),
+            None,
+        )
         if cold is None:
             break
+        must = airs[cold] < floor_low - 1e-6
         candidates = sorted(
             (inputs.price[k] / pulse_air[cold - k - 1], -k)
             for k in range(cold)
@@ -662,14 +706,19 @@ def make_plan(
         )
         chosen = None
         for _score, neg_k in candidates:
-            if fits(-neg_k):
-                chosen = -neg_k
+            k = -neg_k
+            if not must and inputs.price[k] > affordable:
+                continue
+            if fits(k):
+                chosen = k
                 break
-            banned[-neg_k] = True  # temperatures only rise, so it will never fit later
-        if chosen is None:
+            banned[k] = True  # temperatures only rise, so it will never fit later
+        if chosen is not None:
+            turn_on(chosen)
+        elif must:
             given_up.add(cold)
         else:
-            turn_on(chosen)
+            tolerated.add(cold)
 
     # Free or paid-to-use electricity: store it while it fits.
     for k in range(n):
@@ -677,6 +726,7 @@ def make_plan(
             turn_on(k)
 
     shortfall = min(given_up) if given_up else None
+    dips = [j for j in tolerated if airs[j] < low - 1e-6]
     return Plan(
         times=list(inputs.times),
         on=on,
@@ -684,6 +734,7 @@ def make_plan(
         air=airs,
         slab=slabs if two else [None] * (n + 1),
         shortfall=inputs.times[shortfall - 1] + STEP if shortfall else None,
+        dip=inputs.times[min(dips) - 1] + STEP if dips else None,
     )
 
 
@@ -696,16 +747,83 @@ def smart_decide(
     max_temp: float,
     hysteresis: float,
     slab_max: Optional[float],
+    allowed_dip: float = 0.0,
 ) -> Optional[Decision]:
-    """Follow the plan, inside the hard limits. None: no plan, use the simple rules."""
+    """Follow the plan, inside the hard limits. None: no plan, use the simple rules.
+
+    With a plan the air may dip ``allowed_dip`` below the minimum while the plan
+    waits for a cheaper price; below that it always heats.
+    """
     if air is None:
         return Decision(None, REASON_TEMPERATURE_UNAVAILABLE)
     if slab_max is not None and slab is not None and slab >= slab_max - (0 if heater_on else hysteresis):
         return Decision(False, REASON_FLOOR_MAX)
-    if air < min_temp + (hysteresis if heater_on else 0.0):
+    keep = hysteresis if heater_on else 0.0
+    dip = max(0.0, allowed_dip) if plan is not None else 0.0
+    if air < min_temp - dip + keep:
         return Decision(True, REASON_BELOW_MIN)
     if air >= max_temp:
         return Decision(False, REASON_ABOVE_MAX)
     if plan is None:
         return None
-    return Decision(plan.on[0], REASON_PLANNED_HEAT if plan.on[0] else REASON_PLANNED_OFF)
+    if plan.on[0]:
+        return Decision(True, REASON_PLANNED_HEAT)
+    return Decision(False, REASON_ALLOWED_DIP if air < min_temp else REASON_PLANNED_OFF)
+
+
+class ForecastCheck:
+    """Compares what each plan predicted 3 hours ahead with what happened.
+
+    When the plan is often too optimistic it aims higher above the minimum;
+    when the forecast sun often fails to show, the plan counts on less of it.
+    Kept in memory: it starts over after a restart.
+    """
+
+    def __init__(self) -> None:
+        self.pending: dict = {}  # target time -> (predicted air, forecast sun)
+        self.errors: deque = deque(maxlen=CHECK_HOURS * STEPS_PER_HOUR)  # predicted - actual
+        self.sun_ratios: deque = deque(maxlen=CHECK_HOURS * STEPS_PER_HOUR)  # actual / forecast
+
+    def record(self, plan: Plan, inputs: Inputs) -> None:
+        k = CHECK_LEAD_STEPS
+        if len(plan.times) <= k or not inputs.sun_forecast:
+            return
+        self.pending.setdefault(plan.times[k], (plan.air[k], inputs.sun_forecast[k]))
+
+    def observe(self, now: datetime, air: Optional[float], sun: Optional[float]) -> None:
+        for t in sorted(self.pending):
+            if t > now:
+                break
+            predicted_air, forecast_sun = self.pending.pop(t)
+            if now - t >= STEP:  # missed (Home Assistant was busy or stopped)
+                continue
+            if air is not None:
+                self.errors.append(predicted_air - air)
+            if sun is not None and forecast_sun >= 0.1:
+                self.sun_ratios.append(sun / forecast_sun)
+
+    def margin(self, base: float) -> float:
+        """How far above the minimum to aim: covers 4 in 5 of the recent misses."""
+        if len(self.errors) < 16:
+            return base
+        return min(MAX_MARGIN, max(base, _quantile(self.errors, 0.8)))
+
+    def sun_trust(self) -> float:
+        """Share of the forecast sun that shows up on a poor day (1 in 4)."""
+        if len(self.sun_ratios) < 8:
+            return DEFAULT_SUN_TRUST
+        return min(1.0, max(MIN_SUN_TRUST, _quantile(self.sun_ratios, 0.25)))
+
+    def as_dict(self, base: float) -> dict:
+        return {
+            "checked": len(self.errors),
+            "mean_error": round(sum(self.errors) / len(self.errors), 2) if self.errors else None,
+            "margin": round(self.margin(base), 2),
+            "sun_checked": len(self.sun_ratios),
+            "sun_trust": round(self.sun_trust(), 2),
+        }
+
+
+def _quantile(values, q: float) -> float:
+    ordered = sorted(values)
+    return ordered[int(q * (len(ordered) - 1))]

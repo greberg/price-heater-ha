@@ -139,6 +139,15 @@ test("status card shows the smart plan, floor and outdoor", () => {
   assert.match(html, /Next \d+ h: \d+(\.\d)? h heat · 3\.07 SEK/);
 });
 
+test("status card says it rides out an allowed dip", () => {
+  for (const [lang, text] of [["en", /Off – waiting for a cheaper hour \(dip allowed\)/], ["sv", /Av – väntar på billigare timme/]]) {
+    const card = document.createElement("price-heater-card");
+    card.setConfig({});
+    card.hass = makeHass({ lang, reason: "allowed_dip", heater: "off", smart: "ready" }).hass;
+    assert.match(card.shadowRoot.innerHTML, text);
+  }
+});
+
 test("status card says smart is still learning", () => {
   const card = document.createElement("price-heater-card");
   card.setConfig({});

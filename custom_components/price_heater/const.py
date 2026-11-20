@@ -36,5 +36,7 @@ CONF_FLOOR_SENSOR = "floor_sensor"
 CONF_SOLAR_SENSOR = "solar_sensor"
 CONF_MAX_FLOOR_TEMP = "max_floor_temp"
 DEFAULT_MAX_FLOOR_TEMP = 28.0
+CONF_ALLOWED_DIP = "allowed_dip"
+DEFAULT_ALLOWED_DIP = 0.5
 # The plan aims this far above the minimum, so model errors don't reach it.
 PLAN_MARGIN = 0.2
