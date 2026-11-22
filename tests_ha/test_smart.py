@@ -164,3 +164,29 @@ async def test_falls_back_to_simple_without_history(hass: HomeAssistant, setup) 
     state = hass.states.get(STATUS)
     assert state.state in ("cheap_price", "expensive_price", "near_max")
     assert state.attributes["smart"]["status"] == "learning"
+
+
+async def test_estimates_the_slab_without_a_floor_sensor(hass: HomeAssistant, setup) -> None:
+    entry, _ = setup
+    planner = entry.runtime_data.smart
+    planner.floor_sensor = None
+    planner.floor_max = None
+    history = simulated_history(dt_util.utcnow())
+    with patch(
+        "homeassistant.components.recorder.get_instance", return_value=FakeRecorder(hass)
+    ), patch(
+        "homeassistant.components.recorder.history.get_significant_states",
+        side_effect=lambda hass_, start, end, ids, **kw: {e: history[e] for e in ids if e in history},
+    ):
+        await planner.async_refit()
+    assert planner.model.hidden and planner.state is not None
+    assert planner.fit_report["lag_hours"] > 0
+
+    before = planner.state
+    hass.states.async_set(HEATER, "on")
+    await hass.async_block_till_done()
+    later = dt_util.utcnow() + timedelta(hours=2)
+    planner.update(later, 20.0, hass.states.get(PRICE).attributes, 20.0, 23.0, heater_on=True)
+    assert planner.state != before and planner.state_at == later
+    assert planner.plan is not None
+    assert all(step["floor"] is None for step in planner.plan.steps())

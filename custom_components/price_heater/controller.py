@@ -287,7 +287,9 @@ class PriceHeaterController:
 
             self.decision = None
             if self.smart:
-                self.smart.update(now, self.temperature, attrs, self.min_temp, self.max_temp)
+                self.smart.update(
+                    now, self.temperature, attrs, self.min_temp, self.max_temp, bool(self.heater_on)
+                )
                 self.decision = smart_decide(
                     self.smart.plan,
                     self.temperature,

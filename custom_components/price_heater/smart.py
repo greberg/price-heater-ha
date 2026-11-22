@@ -55,7 +55,14 @@ STEPS_PER_HOUR = 4
 PLAN_HOURS = 24  # plan at least this far; unknown prices repeat the day before
 MIN_HOURS = 36  # usable hours of history before the model is trusted
 MIN_SWITCH_HOURS = 2  # the history must have this much both on and off time
-MIN_HEAT = 0.05  # °C per hour: heating that moves the temperature less than this is noise
+MIN_HEAT = 0.1  # °C per hour: heating that moves the temperature less than this is noise
+# Without a floor sensor, floor heating reaches the air with a delay; the fit tries these (hours).
+HEAT_LAGS = (0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0)
+SELECT_HOURS = 6  # the delay is chosen by how well it predicts this far ahead
+OUTLIER_SPREAD = 4.0
+# The heater must explain the room clearly: predictions with it must miss this much less
+# than predictions that ignore it, or the heater entity is probably not the one heating.
+MIN_HEATER_GAIN = 0.1  # windows missing by more than this many typical misses are left out
 HISTORY_DAYS = 10
 
 # Forecast caution: how much of the forecast sun the plan counts on far ahead
@@ -300,6 +307,8 @@ class ThermalModel:
     slab_air: float = 0.0
     slab_base: float = 0.0
     two_node: bool = False
+    lag: float = 0.0  # hours: single store only, heating reaches the air this much later
+    hidden: bool = False  # two stores, but the slab is estimated, not measured
     hours: float = 0.0  # hours of history it was fitted on
     rmse: float = 0.0  # typical error of a 1-hour air prediction, °C
 
@@ -314,8 +323,14 @@ class ThermalModel:
                     + self.air_sun * sun + self.air_base
                 )
             else:
-                d_slab = 0.0
-                d_air = self.heat * u + self.air_out * (outdoor - air) + self.air_sun * sun + self.air_base
+                # ``slab`` carries the delayed heating share (0..1) when there is a lag.
+                if self.lag > 0:
+                    d_slab = (u - slab) / self.lag
+                    drive = slab
+                else:
+                    d_slab = 0.0
+                    drive = u
+                d_air = self.heat * drive + self.air_out * (outdoor - air) + self.air_sun * sun + self.air_base
             air += h * d_air
             slab += h * d_slab
         return air, slab
@@ -325,6 +340,7 @@ class ThermalModel:
         return ThermalModel(
             heat=self.heat, air_out=self.air_out, air_sun=0.0, air_base=0.0,
             air_slab=self.air_slab, slab_air=self.slab_air, slab_base=0.0, two_node=self.two_node,
+            lag=self.lag, hidden=self.hidden,
         )
 
     def as_dict(self) -> dict:
@@ -406,6 +422,8 @@ def fit_model(
         mean = lambda f: sum(f(s) for s in head) / span  # noqa: E731
         windows.append(
             {
+                "k": k,
+                "air": mean(lambda s: s.air),
                 "u": mean(lambda s: s.on),
                 "sun": mean(lambda s: s.sun),
                 "out": mean(lambda s: s.outdoor - s.air),
@@ -425,29 +443,46 @@ def fit_model(
     if on_hours < MIN_SWITCH_HOURS or hours - on_hours < MIN_SWITCH_HOURS:
         return None, STATUS_NEEDS_VARIATION
 
-    def air_fit(first: str):
+    d_air = [w["d_air"] for w in windows]
+
+    def robust(rows, positive, ys=d_air):
+        """Least squares, then again without the windows that miss far more than usual
+        (a sensor in the sun, an open door): returns (coef, typical miss, left out)."""
+        coef = least_squares(rows, ys, positive=positive)
+        if not coef:
+            return None, None, 0
+        res = [abs(sum(c * x for c, x in zip(coef, r)) - y) for r, y in zip(rows, ys)]
+        typical = max(_quantile(res, 0.5), 0.01)
+        keep = [i for i, e in enumerate(res) if e <= OUTLIER_SPREAD * typical]
+        if len(keep) < len(rows):
+            again = least_squares([rows[i] for i in keep], [ys[i] for i in keep], positive=positive)
+            if again:
+                coef = again
+                res = [abs(sum(c * x for c, x in zip(coef, r)) - y) for r, y in zip(rows, ys)]
+                typical = max(_quantile(res, 0.5), 0.01)
+        return coef, typical, len(rows) - len(keep)
+
+    def air_fit(first: Sequence[float], min_first: float, out: Optional[dict]):
         """Air equation; drops the constant if it hides the outdoor loss."""
         for constant in (True, False):
-            rows = [[w[first], w["out"], w["sun"]] + ([1.0] if constant else []) for w in windows]
-            coef = least_squares(rows, [w["d_air"] for w in windows], positive=(0, 1, 2))
+            rows = [[f, w["out"], w["sun"]] + ([1.0] if constant else []) for f, w in zip(first, windows)]
+            coef, typical, dropped = robust(rows, (0, 1, 2))
             if coef and not constant:
                 coef.append(0.0)
-            if report is not None:
-                report["air_" + ("with_constant" if constant else "without_constant")] = _rounded(coef)
-            if coef and coef[0] > (MIN_HEAT if first == "u" else 0) and coef[1] > 0:
-                return coef
-        return None
+            if out is not None:
+                out["air_" + ("with_constant" if constant else "without_constant")] = _rounded(coef)
+                if dropped:
+                    out["left_out"] = dropped
+            if coef and coef[0] > min_first and coef[1] > 0:
+                return coef, typical
+        return None, None
 
     model = None
     if two_node:
-        air = air_fit("slab")
+        air, _typical = air_fit([w["slab"] for w in windows], 0.0, report)
         # No constant term: with the slab-air gap fairly steady it can't be
         # told apart from the coupling, so all slab losses go via the air.
-        slab = least_squares(
-            [[w["u"], -w["slab"]] for w in windows],
-            [w["d_slab"] for w in windows],
-            positive=(0, 1),
-        )
+        slab, _t, _d = robust([[w["u"], -w["slab"]] for w in windows], (0, 1), [w["d_slab"] for w in windows])
         if report is not None:
             report["slab"] = _rounded(slab)
         if air and slab and slab[0] > MIN_HEAT and slab[1] > 0:
@@ -455,21 +490,181 @@ def fit_model(
                 heat=slab[0], air_out=air[1], air_sun=air[2], air_base=air[3],
                 air_slab=air[0], slab_air=slab[1], two_node=True,
             )
-            predicted = [air[0] * w["slab"] + air[1] * w["out"] + air[2] * w["sun"] + air[3] for w in windows]
     if model is None:
-        # Without a floor sensor, or when the floor history doesn't make sense:
-        # heating straight into the air, which still plans ahead of prices and sun.
-        air = air_fit("u")
-        if not air:
+        # Without a floor sensor (or one that doesn't make sense) the concrete is
+        # still there: estimate it. For a slab that settles in ``lag`` hours,
+        #   slab = heat*lag*D + A
+        # where D is the heating share and A the measured air, both smoothed over
+        # ``lag`` hours. The air equation is then linear again:
+        #   d_air = c0*D + c1*(A - air) + air_out*(outdoor - air) + air_sun*sun + base
+        # with c1 = air_slab and c0 = air_slab*heat*lag. If c1 comes out zero the
+        # heating simply reaches the air ``lag`` hours late. The lag is the one that
+        # predicts best 6 hours ahead, which is what a plan needs.
+        best = None
+        tried = {}
+        for lag in HEAT_LAGS:
+            delayed = delayed_heating(samples, lag)
+            smooth_air = smoothed_air(samples, lag)
+            mean = lambda series, w: sum(series[w["k"] + i] for i in range(span)) / span  # noqa: E731
+            if lag > 0:
+                rows = [
+                    [mean(delayed, w), mean(smooth_air, w) - w["air"], w["out"], w["sun"]]
+                    for w in windows
+                ]
+            else:
+                rows = [[w["u"], 0.0, w["out"], w["sun"]] for w in windows]
+            attempt: dict = {}
+            coef = _fit_air_rows(rows, d_air, robust, attempt)
+            if not coef or coef[0] <= MIN_HEAT:
+                tried["%g" % lag] = None
+                continue
+            c0, c1, out_rate, sun_rate, base = coef
+            if lag > 0 and c1 > 1e-3:
+                candidate = ThermalModel(
+                    heat=c0 / (c1 * lag), slab_air=1.0 / lag, air_slab=c1, air_out=out_rate,
+                    air_sun=sun_rate, air_base=base, two_node=True, hidden=True,
+                )
+                states = [candidate.heat * lag * d + a for d, a in zip(delayed, smooth_air)]
+            else:
+                candidate = ThermalModel(heat=c0, air_out=out_rate, air_sun=sun_rate, air_base=base, lag=lag)
+                states = delayed if lag > 0 else None
+            miss = _replay_rmse(candidate, samples, SELECT_HOURS * span, states=states)
+            tried["%g" % lag] = round(miss, 3)
+            if best is None or miss < best[0] - 1e-4:
+                best = (miss, candidate, states, attempt, lag)
+        # Baseline: the room explained by outdoor and sun alone.
+        base_coef, _t, _d = robust([[w["out"], w["sun"], 1.0] for w in windows], (0, 1))
+        baseline = float("inf")
+        if base_coef:
+            baseline = _replay_rmse(
+                ThermalModel(heat=0.0, air_out=base_coef[0], air_sun=base_coef[1], air_base=base_coef[2]),
+                samples, SELECT_HOURS * span,
+            )
+            tried["without_heater"] = round(baseline, 3)
+            if best is not None and best[0] > (1 - MIN_HEATER_GAIN) * baseline:
+                if report is not None:
+                    report["heater_explains_little"] = True
+                best = None
+        if report is not None:
+            report["lag_typical_miss_6h"] = tried
+            if best:
+                report.update(best[3])
+                report["lag_hours"] = best[4]
+        if best is None:
             if report is not None:
                 report["failed"] = "two_node" if two_node else "one_node"
             return None, STATUS_NO_FIT
-        model = ThermalModel(heat=air[0], air_out=air[1], air_sun=air[2], air_base=air[3])
-        predicted = [air[0] * w["u"] + air[1] * w["out"] + air[2] * w["sun"] + air[3] for w in windows]
+        _miss, model, states, _attempt, _lag = best
+        model.hours = hours
+        model.rmse = _replay_rmse(model, samples, span, [w["k"] for w in windows], states=states)
+        return model, STATUS_READY
 
     model.hours = hours
-    model.rmse = math.sqrt(sum((p - w["d_air"]) ** 2 for p, w in zip(predicted, windows)) / len(windows))
+    model.rmse = _replay_rmse(model, samples, span, [w["k"] for w in windows], states=[x.slab for x in samples])
     return model, STATUS_READY
+
+
+def _fit_air_rows(rows, d_air, robust, out: Optional[dict]) -> Optional[List[float]]:
+    """[heating, slab term, outdoor, sun] rows -> coefficients plus a constant;
+    without the constant if it hides the outdoor loss."""
+    for constant in (True, False):
+        full = [r + [1.0] for r in rows] if constant else rows
+        coef, _typical, dropped = robust(full, (0, 1, 2, 3))
+        if coef and not constant:
+            coef = coef + [0.0]
+        if out is not None:
+            out["air_" + ("with_constant" if constant else "without_constant")] = _rounded(coef)
+            if dropped:
+                out["left_out"] = dropped
+        if coef and coef[0] > 0 and coef[2] > 0:
+            return coef
+    return None
+
+
+def smoothed_air(samples: Sequence[Sample], lag: float) -> List[float]:
+    """The measured air temperature smoothed over ``lag`` hours (what a slab would follow)."""
+    out: List[float] = []
+    state: Optional[float] = None
+    keep = 1.0 if lag <= 0 else 1 - math.exp(-STEP_H / lag)
+    for s in samples:
+        if state is None:
+            state = s.air
+        out.append(state if state is not None else 0.0)
+        if s.air is not None and state is not None:
+            state += (s.air - state) * keep
+    return out
+
+
+def model_state(model: ThermalModel, samples: Sequence[Sample]) -> Optional[float]:
+    """The hidden state at the end of the history: estimated slab, or delayed heating."""
+    if model.two_node and not model.hidden:
+        return None
+    if model.hidden:
+        lag = 1.0 / model.slab_air
+        return model.heat * lag * delayed_heating(samples, lag)[-1] + smoothed_air(samples, lag)[-1]
+    if model.lag > 0:
+        return delayed_heating(samples, model.lag)[-1]
+    return None
+
+
+def advance_state(model: ThermalModel, state: Optional[float], air: Optional[float], on: float, hours: float) -> Optional[float]:
+    """Move the hidden state forward with the measured air and the heater."""
+    if state is None or hours <= 0:
+        return state
+    if model.hidden:
+        if air is None:
+            return state
+        target = air + model.heat * on / model.slab_air
+        return target + (state - target) * math.exp(-model.slab_air * hours)
+    if model.lag > 0:
+        return on + (state - on) * math.exp(-hours / model.lag)
+    return state
+
+
+def delayed_heating(samples: Sequence[Sample], lag: float) -> List[float]:
+    """The heating share as the air feels it, ``lag`` hours later (first-order delay)."""
+    out = []
+    state = 0.0
+    keep = 1.0 if lag <= 0 else 1 - math.exp(-STEP_H / lag)
+    for s in samples:
+        out.append(state if lag > 0 else (s.on or 0.0))
+        if lag > 0:
+            state += ((s.on or 0.0) - state) * keep
+    return out
+
+
+def _replay_rmse(
+    model: ThermalModel,
+    samples: Sequence[Sample],
+    steps: int,
+    starts: Optional[Sequence[int]] = None,
+    states: Optional[Sequence[Optional[float]]] = None,
+) -> float:
+    """Typical miss of the air predicted ``steps`` ahead from the measured start,
+    with the measured heating, outdoor and sun on the way; outliers left out."""
+    if starts is None:
+        starts = range(0, len(samples) - steps, STEPS_PER_HOUR)
+    misses = []
+    for k in starts:
+        if k + steps >= len(samples):
+            continue
+        path = samples[k : k + steps + 1]
+        if any(p.air is None for p in (path[0], path[-1])) or any(
+            p.outdoor is None or p.on is None for p in path[:-1]
+        ):
+            continue
+        slab = states[k] if states is not None else 0.0
+        if slab is None:
+            continue
+        air = path[0].air
+        for p in path[:-1]:
+            air, slab = model.step(air, slab, p.outdoor, p.sun, p.on)
+        misses.append((air - path[-1].air) ** 2)
+    if not misses:
+        return float("inf")
+    cut = _quantile(misses, 0.5) * OUTLIER_SPREAD ** 2 + 1e-6
+    kept = [m for m in misses if m <= cut]
+    return math.sqrt(sum(kept) / len(kept))
 
 
 def _rounded(coef: Optional[Sequence[float]]) -> Optional[List[float]]:
@@ -657,7 +852,7 @@ def make_plan(
     """
     n = len(inputs.times)
     two = model.two_node and slab is not None
-    start_slab = slab if two else 0.0
+    start_slab = slab if slab is not None and (two or model.lag > 0) else 0.0
     airs, slabs = _simulate(model, inputs, air, start_slab, [0.0] * n)
 
     # Response to one step of heating, j steps after it ends.
@@ -732,7 +927,7 @@ def make_plan(
         on=on,
         price=list(inputs.price),
         air=airs,
-        slab=slabs if two else [None] * (n + 1),
+        slab=slabs if two and not model.hidden else [None] * (n + 1),  # an estimated slab isn't shown
         shortfall=inputs.times[shortfall - 1] + STEP if shortfall else None,
         dip=inputs.times[min(dips) - 1] + STEP if dips else None,
     )

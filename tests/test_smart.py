@@ -158,18 +158,21 @@ def test_fit_falls_back_to_one_node_when_the_floor_makes_no_sense():
     stuck_floor = [smart.Sample(s.time, s.air, 23.0, s.outdoor, s.sun, s.on) for s in history]
     report = {}
     fitted, status = smart.fit_model(stuck_floor, two_node=True, report=report)
-    assert status == smart.STATUS_READY and not fitted.two_node
+    # The floor sensor is ignored and the slab estimated instead.
+    assert status == smart.STATUS_READY and fitted.hidden
     assert fitted.heat > 0 and fitted.air_out > 0
-    assert report["slab"] is None or min(report["slab"]) <= 0
+    assert report["slab"] is None or min(report["slab"]) <= smart.MIN_HEAT
 
 
 def test_fit_reports_why_it_failed():
     history = _simulated_history(HOUSE)
-    # The room gets colder whenever the heater is on: the heater entity is wrong.
-    backwards = [smart.Sample(s.time, s.air, None, s.outdoor, s.sun, 1.0 - s.on) for s in history]
-    backwards = [smart.Sample(s.time, 40 - s.air, None, s.outdoor, s.sun, s.on) for s in backwards]
+    # The heater entity is the wrong one: it switches with no relation to the room.
+    unrelated = [
+        smart.Sample(s.time, s.air, None, s.outdoor, s.sun, 1.0 if (k * 7919) % 13 < 5 else 0.0)
+        for k, s in enumerate(history)
+    ]
     report = {}
-    fitted, status = smart.fit_model(backwards, two_node=False, report=report)
+    fitted, status = smart.fit_model(unrelated, two_node=False, report=report)
     assert (fitted, status) == (None, smart.STATUS_NO_FIT)
     assert report["failed"] == "one_node" and report["hours"] >= smart.MIN_HOURS
 
@@ -350,3 +353,65 @@ def test_forecast_check_records_plans_and_skips_missed_checks():
     assert target in check.pending
     check.observe(target + timedelta(hours=1), 20.0, None)  # Home Assistant was down
     assert not check.pending and not check.errors
+
+
+# --------------------------------------------------------------------------
+# Floor heating without a floor sensor: the slab is estimated
+# --------------------------------------------------------------------------
+
+def _without_floor(history):
+    return [smart.Sample(s.time, s.air, None, s.outdoor, s.sun, s.on) for s in history]
+
+
+def test_fit_estimates_the_slab_without_a_floor_sensor():
+    report = {}
+    fitted, status = smart.fit_model(_without_floor(_simulated_history(HOUSE)), two_node=False, report=report)
+    assert status == smart.STATUS_READY
+    assert fitted.hidden and fitted.two_node
+    # Heating reaches the room hours late, through a slab of about the right speed.
+    assert 3 <= 1 / fitted.slab_air <= 12 and report["lag_hours"] == 1 / fitted.slab_air
+    assert fitted.rmse < 0.1
+    assert report["lag_typical_miss_6h"]["without_heater"] > 2 * report["lag_typical_miss_6h"]["%g" % report["lag_hours"]]
+
+
+def test_fit_ignores_temperature_spikes():
+    history = _without_floor(_simulated_history(HOUSE))
+    spiky = [
+        smart.Sample(s.time, s.air + (5.0 if k % 96 in (48, 49, 50) else 0.0), None, s.outdoor, s.sun, s.on)
+        for k, s in enumerate(history)
+    ]
+    clean, _ = smart.fit_model(history, two_node=False)
+    report = {}
+    fitted, status = smart.fit_model(spiky, two_node=False, report=report)
+    assert status == smart.STATUS_READY and fitted.hidden
+    assert report["left_out"] > 0
+    assert fitted.air_sun < 2 * clean.air_sun + 0.5  # the noon spikes are not taken for sun
+    assert abs(fitted.heat - clean.heat) < 0.5 * clean.heat
+
+
+def test_hidden_state_follows_heating_and_air():
+    model = smart.ThermalModel(
+        heat=1.0, air_out=0.04, air_sun=1.0, air_base=0.0, air_slab=0.3, slab_air=0.2,
+        two_node=True, hidden=True,
+    )
+    # Heating for long settles the slab at air + heat/slab_air; off, it falls back to the air.
+    assert smart.advance_state(model, 20.0, 20.0, 1.0, 100) == pytest.approx(25.0)
+    assert smart.advance_state(model, 25.0, 20.0, 0.0, 100) == pytest.approx(20.0)
+    assert 20.0 < smart.advance_state(model, 25.0, 20.0, 0.0, 2) < 25.0
+    assert smart.advance_state(model, 22.0, None, 1.0, 1) == 22.0  # no air reading: keep it
+    lagged = smart.ThermalModel(heat=0.8, air_out=0.04, air_sun=1.0, air_base=0.0, lag=2.0)
+    assert smart.advance_state(lagged, 0.0, 20.0, 1.0, 100) == pytest.approx(1.0)
+    plain = smart.ThermalModel(heat=0.8, air_out=0.04, air_sun=1.0, air_base=0.0)
+    assert smart.model_state(plain, []) is None
+
+
+def test_plan_charges_the_estimated_slab_at_night():
+    fitted, _ = smart.fit_model(_without_floor(_simulated_history(HOUSE)), two_node=False)
+    history = _without_floor(_simulated_history(HOUSE))
+    assert smart.model_state(fitted, history) > 22  # the slab ends the history warm
+    warm = smart.make_plan(fitted, _inputs(SPIKY), air=20.5, slab=26.0, low=20.0, high=23.0)
+    assert sum(warm.on) == 0  # stored heat lasts the day
+    plan = smart.make_plan(fitted, _inputs(SPIKY), air=20.5, slab=20.5, low=20.0, high=23.0)  # cooled
+    assert plan.shortfall is None
+    assert sum(plan.on[: 6 * 4]) > sum(plan.on[6 * 4 :])  # bought at night
+    assert all(s is None for s in plan.slab)  # an estimated slab is not shown as the floor

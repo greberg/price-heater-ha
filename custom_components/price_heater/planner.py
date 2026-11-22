@@ -63,6 +63,8 @@ class SmartPlanner:
         self.full_power_w: Optional[float] = None
         self.fitted_at: Optional[datetime] = None
         self.fit_report: dict = {}
+        self.state: Optional[float] = None  # estimated slab (or delayed heating) without a floor sensor
+        self.state_at: Optional[datetime] = None
         self.forecast_at: Optional[datetime] = None
         self.outdoor: Optional[float] = None
         self.floor: Optional[float] = None
@@ -111,10 +113,12 @@ class SmartPlanner:
             _LOGGER.warning("%s: could not read history to learn the house: %s", self.name, err)
             self.model_status = STATUS_NO_HISTORY
             return
-        model, status, scale, full, report = await self.hass.async_add_executor_job(
+        model, status, scale, full, report, state = await self.hass.async_add_executor_job(
             self._fit, states, start, end
         )
         self.fit_report = report
+        if model is not None:
+            self.state, self.state_at = state, end
         if status == smart.STATUS_NO_FIT:
             _LOGGER.warning("%s: could not fit a model of the house: %s", self.name, report)
         if model is not None or self.model is None:
@@ -167,9 +171,10 @@ class SmartPlanner:
         samples, scale = smart.build_samples(grid, air, slab, outdoor, on, sun_raw, lat, lon)
         report: dict = {}
         model, status = smart.fit_model(samples, two_node=bool(self.floor_sensor), report=report)
-        if model is not None and self.floor_sensor and not model.two_node:
-            report["note"] = "floor history did not fit; heating modelled straight into the air"
-        return model, status, scale, full, report
+        if model is not None and self.floor_sensor and (model.hidden or not model.two_node):
+            report["note"] = "floor history did not fit; the slab is estimated instead"
+        state = smart.model_state(model, samples) if model is not None else None
+        return model, status, scale, full, report, state
 
     # ------------------------------------------------------------------ forecast
     async def async_update_forecast(self) -> None:
@@ -211,9 +216,15 @@ class SmartPlanner:
         price_attributes: Mapping[str, Any],
         min_temp: float,
         max_temp: float,
+        heater_on: bool = False,
     ) -> None:
         """Plan again when a new 15-minute step starts or anything it used changed."""
         self.read_sensors()
+        if self.model is not None and self.state is not None and self.state_at is not None:
+            hours = (now - self.state_at).total_seconds() / 3600
+            if hours > 0:
+                self.state = smart.advance_state(self.model, self.state, air, 1.0 if heater_on else 0.0, hours)
+                self.state_at = now
         self.check.observe(now, air, self.sun)
         if self.model is None:
             self.plan = None
@@ -228,19 +239,20 @@ class SmartPlanner:
         if self.plan is not None and key == self._plan_key:
             return
         self._plan_key = key
-        two = self.model.two_node
+        measured_floor = self.model.two_node and not self.model.hidden
         inputs = smart.build_inputs(
             now, slots, self.weather_points, self.outdoor,
             self.hass.config.latitude, self.hass.config.longitude, self.sun,
             sun_trust=trust,
         )
-        if inputs is None or air is None or (two and self.floor is None):
+        if inputs is None or air is None or (measured_floor and self.floor is None):
             self.plan = None
             return
         low = min_temp + margin
         self.plan = smart.make_plan(
-            self.model, inputs, air, self.floor if two else None,
-            low, max_temp, self.floor_max, hard_low=low - self.allowed_dip,
+            self.model, inputs, air, self.floor if measured_floor else self.state,
+            low, max_temp, self.floor_max if measured_floor else None,
+            hard_low=low - self.allowed_dip,
         )
         self.check.record(self.plan, inputs)
 
@@ -251,6 +263,9 @@ class SmartPlanner:
             "model": self.model.as_dict() if self.model else None,
             "learned_at": self.fitted_at.isoformat() if self.fitted_at else None,
             "fit": self.fit_report or None,
+            "estimated_slab": round(self.state, 1)
+            if self.model is not None and self.model.hidden and self.state is not None
+            else None,
             "allowed_dip": self.allowed_dip,
             "forecast_check": self.check.as_dict(PLAN_MARGIN),
             "forecast_at": self.forecast_at.isoformat() if self.forecast_at else None,
